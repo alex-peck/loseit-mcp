@@ -1,5 +1,21 @@
 import { z } from "zod";
 
+// Last-resort GWT values, only used if auto-discovery fails AND no explicit
+// override is provided. These track a specific Lose It web build and WILL go
+// stale when Lose It recompiles — auto-discovery (see gwtBuild.ts) is the
+// primary source of truth.
+const FALLBACK_POLICY_HASH = "8F87EC8969F17AE77B6283D3A83F6D4C";
+const FALLBACK_PERMUTATION = "351AE5DC0CA36AD3BA9C7CBA7B0E07B8";
+
+const booleanEnv = (defaultValue: boolean) =>
+  z
+    .string()
+    .trim()
+    .optional()
+    .transform((v) =>
+      v === undefined || v === "" ? defaultValue : v.toLowerCase() !== "false",
+    );
+
 const envSchema = z.object({
   LOSEIT_EMAIL: z.string().trim().min(1),
   LOSEIT_PASSWORD: z.string().trim().min(1),
@@ -15,16 +31,13 @@ const envSchema = z.object({
     .positive()
     .max(120_000)
     .default(15_000),
-  LOSEIT_GWT_POLICY_HASH: z
-    .string()
-    .trim()
-    .min(1)
-    .default("2755A092A086CADF822A722370D298F9"),
-  LOSEIT_GWT_PERMUTATION: z
-    .string()
-    .trim()
-    .min(1)
-    .default("79FCB90B69F5FF2C7877662E5529652C"),
+  // When true (default), the policy hash + permutation are discovered from
+  // Lose It's live web build at startup. Set to "false" to skip discovery and
+  // use the explicit overrides / fallbacks below.
+  LOSEIT_GWT_AUTOFETCH: booleanEnv(true),
+  // Explicit overrides. When set, they win over auto-discovery.
+  LOSEIT_GWT_POLICY_HASH: z.string().trim().min(1).optional(),
+  LOSEIT_GWT_PERMUTATION: z.string().trim().min(1).optional(),
 });
 
 export interface LoseItConfig {
@@ -35,9 +48,15 @@ export interface LoseItConfig {
   requestTimeoutMs: number;
   gwt: {
     moduleBase: string;
-    policyHash: string;
-    permutation: string;
     serviceClass: string;
+    autoFetch: boolean;
+    /** Explicit override for the policy hash, or null to auto-discover. */
+    policyHashOverride: string | null;
+    /** Explicit override for the permutation, or null to auto-discover. */
+    permutationOverride: string | null;
+    /** Last-resort values if discovery fails and no override is set. */
+    fallbackPolicyHash: string;
+    fallbackPermutation: string;
   };
 }
 
@@ -56,19 +75,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): LoseItConfig {
     process.env["HOME"] ?? "",
   );
 
-  const usingDefaultHash =
-    parsed.data.LOSEIT_GWT_POLICY_HASH ===
-    "2755A092A086CADF822A722370D298F9";
-  const usingDefaultPerm =
-    parsed.data.LOSEIT_GWT_PERMUTATION ===
-    "79FCB90B69F5FF2C7877662E5529652C";
-
-  if (usingDefaultHash || usingDefaultPerm) {
-    console.error(
-      "Warning: using hardcoded GWT policy hash/permutation. These may break if Lose It deploys a new web build. Set LOSEIT_GWT_POLICY_HASH and LOSEIT_GWT_PERMUTATION env vars to override.",
-    );
-  }
-
   return {
     email: parsed.data.LOSEIT_EMAIL,
     password: parsed.data.LOSEIT_PASSWORD,
@@ -77,10 +83,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): LoseItConfig {
     requestTimeoutMs: parsed.data.LOSEIT_REQUEST_TIMEOUT_MS,
     gwt: {
       moduleBase: "https://d3hsih69yn4d89.cloudfront.net/web/",
-      policyHash: parsed.data.LOSEIT_GWT_POLICY_HASH,
-      permutation: parsed.data.LOSEIT_GWT_PERMUTATION,
-      serviceClass:
-        "com.loseit.core.client.service.LoseItRemoteService",
+      serviceClass: "com.loseit.core.client.service.LoseItRemoteService",
+      autoFetch: parsed.data.LOSEIT_GWT_AUTOFETCH,
+      policyHashOverride: parsed.data.LOSEIT_GWT_POLICY_HASH ?? null,
+      permutationOverride: parsed.data.LOSEIT_GWT_PERMUTATION ?? null,
+      fallbackPolicyHash: FALLBACK_POLICY_HASH,
+      fallbackPermutation: FALLBACK_PERMUTATION,
     },
   };
 }

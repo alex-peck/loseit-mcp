@@ -6,6 +6,13 @@
  */
 
 import { dayNumberToDate, type GwtResponse } from "./gwt.js";
+import { StructReader, StructParseError } from "./structReader.js";
+import type { StructFieldDef } from "./structReader.js";
+import {
+  buildGwtTypeRegistry,
+  GWT_ENUMS,
+  NUTRIENT_BY_INTID,
+} from "./structTypes.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -460,14 +467,37 @@ export function extractGoals(raw: GwtResponse): GoalsResult {
 // getInitializationData -> Food Log
 // ---------------------------------------------------------------------------
 
+export interface FoodNutrition {
+  /** Calories for the logged portion. */
+  calories: number | null;
+  fat: number | null;
+  saturatedFat: number | null;
+  cholesterol: number | null;
+  sodium: number | null;
+  carbohydrates: number | null;
+  fiber: number | null;
+  sugars: number | null;
+  protein: number | null;
+}
+
 export interface FoodLogItem {
   name: string;
   brand: string;
+  /** Number of servings logged (informational; nutrition is already portion-adjusted). */
+  quantity: number | null;
+  nutrition: FoodNutrition;
 }
 
 export interface FoodLogResult {
   date: string;
   entries: FoodLogItem[];
+  /** Sum of per-entry calories for the day, when nutrition could be extracted. */
+  totalCalories: number | null;
+  /**
+   * True when full per-food nutrition was extracted structurally; false when the
+   * parser fell back to name/brand-only heuristics (e.g. after a Lose It model change).
+   */
+  detailed: boolean;
 }
 
 /**
@@ -485,10 +515,128 @@ export interface FoodLogResult {
  * numServings, numServings, servingAmount, ..., FoodServingSizeRef,
  * caloriesPerServing, doubleRef, ...
  */
-export function extractFoodLog(
+const EMPTY_NUTRITION: FoodNutrition = {
+  calories: null,
+  fat: null,
+  saturatedFat: null,
+  cholesterol: null,
+  sodium: null,
+  carbohydrates: null,
+  fiber: null,
+  sugars: null,
+  protein: null,
+};
+
+// The type registry is immutable; build it once and reuse across calls.
+let cachedRegistry: Map<string, StructFieldDef[]> | null = null;
+function gwtRegistry(): Map<string, StructFieldDef[]> {
+  cachedRegistry ??= buildGwtTypeRegistry();
+  return cachedRegistry;
+}
+
+function asRecord(v: unknown): Record<string, unknown> | null {
+  return typeof v === "object" && v !== null && !Array.isArray(v)
+    ? (v as Record<string, unknown>)
+    : null;
+}
+
+function doubleValue(v: unknown): number | null {
+  const rec = asRecord(v);
+  const raw = rec && rec._cls === "Double" ? rec.v : v;
+  return typeof raw === "number" ? raw : null;
+}
+
+function round(value: number | null, digits: number): number | null {
+  if (value === null) return null;
+  const f = 10 ** digits;
+  return Math.round(value * f) / f;
+}
+
+/**
+ * graph, then read every FoodLogEntry's serving nutrients. Nutrient map keys
+ * are FoodMeasurement objects carrying a stable nutrient-type id; back-references
+ * to shared key objects resolve automatically via the reader's object table.
+ * Returns null if the graph fails to deserialize cleanly (caller falls back).
+ */
+function extractFoodLogStructural(
   raw: GwtResponse,
   targetDayNumber: number,
-): FoodLogResult {
+): FoodLogItem[] | null {
+  const reader = new StructReader(
+    raw.values,
+    raw.stringTable,
+    gwtRegistry(),
+    GWT_ENUMS,
+  );
+
+  try {
+    reader.readObject();
+  } catch (error) {
+    if (error instanceof StructParseError) return null;
+    throw error;
+  }
+  // A clean read consumes every token; anything left means the layout desynced.
+  if (reader.remaining !== 0) return null;
+
+  const items: FoodLogItem[] = [];
+  let anyNutrient = false;
+
+  for (const obj of reader.allObjects()) {
+    const entry = asRecord(obj);
+    if (!entry || entry._cls !== "FoodLogEntry") continue;
+
+    const ident = asRecord(entry.identifier);
+    const name =
+      (ident && typeof ident.name === "string" ? ident.name : null) ??
+      (ident && typeof ident.nullableName === "string"
+        ? ident.nullableName
+        : null);
+    if (!name) continue;
+    const brand = ident && typeof ident.brand === "string" ? ident.brand : "";
+
+    const ctx = asRecord(entry.context);
+    const dayDate = ctx && asRecord(ctx.dayDate);
+    const day = dayDate && typeof dayDate.dayNumber === "number"
+      ? dayDate.dayNumber
+      : null;
+    if (day !== targetDayNumber) continue;
+
+    const serving = asRecord(entry.serving);
+    const foodNutrients = serving && asRecord(serving.nutrients);
+    const servingSize = serving && asRecord(serving.servingSize);
+    const quantity =
+      servingSize && typeof servingSize.quantity === "number"
+        ? servingSize.quantity
+        : null;
+
+    const nutrition: FoodNutrition = { ...EMPTY_NUTRITION };
+    const pairs = foodNutrients?.nutrients;
+    if (Array.isArray(pairs)) {
+      for (const pair of pairs as Array<[unknown, unknown]>) {
+        const key = asRecord(pair[0]);
+        if (!key || key._cls !== "FoodMeasurement") continue;
+        const nutrientName = NUTRIENT_BY_INTID[key.nutrientTypeId as number];
+        if (!nutrientName) continue;
+        const value = doubleValue(pair[1]);
+        (nutrition as unknown as Record<string, number | null>)[nutrientName] =
+          round(value, 2);
+        if (value !== null) anyNutrient = true;
+      }
+    }
+
+    items.push({ name, brand, quantity: round(quantity, 4), nutrition });
+  }
+
+  // If we found entries but not a single nutrient resolved, the nutrient-key
+  // mapping is broken — treat as a failed structural read.
+  if (items.length > 0 && !anyNutrient) return null;
+  return items;
+}
+
+function extractFoodLogHeuristic(
+  raw: GwtResponse,
+  targetDayNumber: number,
+): FoodLogItem[] {
   const { values, stringTable } = raw;
 
   const foodIdentifierRef = findStringRef(stringTable, "com.loseit.core.client.model.FoodIdentifier/");
@@ -583,11 +731,41 @@ export function extractFoodLog(
     entries.push({
       name: food.name,
       brand: food.brand,
+      quantity: null,
+      nutrition: { ...EMPTY_NUTRITION },
     });
+  }
+
+  return entries;
+}
+
+/**
+ * Extract the food log for a day from a getInitializationData response.
+ *
+ * Prefers a full structural deserialization (per-food calories + macros); if
+ * the object graph fails to parse cleanly (e.g. Lose It changed its model),
+ * gracefully falls back to a name/brand-only positional heuristic.
+ */
+export function extractFoodLog(
+  raw: GwtResponse,
+  targetDayNumber: number,
+): FoodLogResult {
+  const structural = extractFoodLogStructural(raw, targetDayNumber);
+  const detailed = structural !== null;
+  const entries = structural ?? extractFoodLogHeuristic(raw, targetDayNumber);
+
+  let totalCalories: number | null = null;
+  if (detailed) {
+    totalCalories = round(
+      entries.reduce((sum, e) => sum + (e.nutrition.calories ?? 0), 0),
+      1,
+    );
   }
 
   return {
     date: dayNumberToDateString(targetDayNumber),
     entries,
+    totalCalories,
+    detailed,
   };
 }

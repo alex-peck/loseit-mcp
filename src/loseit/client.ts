@@ -2,6 +2,7 @@ import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 
 import type { LoseItConfig } from "../config.js";
+import { fetchGwtBuildInfo } from "./gwtBuild.js";
 import {
   parseGwtResponse,
   GwtReader,
@@ -46,10 +47,14 @@ export class LoseItClient {
   private cookies = new Map<string, string>();
   private userId: number | null = null;
   private username: string | null = null;
+  private policyHash: string | null = null;
+  private permutation: string | null = null;
 
   constructor(private readonly config: LoseItConfig) {}
 
   async initialize(): Promise<void> {
+    await this.resolveGwtBuildInfo();
+
     const cached = await this.loadSession();
     if (cached) {
       this.cookies = new Map(Object.entries(cached.cookies));
@@ -69,6 +74,45 @@ export class LoseItClient {
     }
 
     await this.login();
+  }
+
+  /**
+   * Determine the GWT permutation + serialization-policy hash to use.
+   * Precedence: explicit env override > live auto-discovery > last-resort
+   * fallback constants. Any discovery failure degrades gracefully.
+   */
+  private async resolveGwtBuildInfo(): Promise<void> {
+    const { gwt } = this.config;
+
+    let permutation = gwt.permutationOverride;
+    let policyHash = gwt.policyHashOverride;
+
+    const needsDiscovery =
+      gwt.autoFetch && (permutation === null || policyHash === null);
+
+    if (needsDiscovery) {
+      try {
+        const info = await fetchGwtBuildInfo(
+          gwt.moduleBase,
+          gwt.serviceClass,
+          this.config.requestTimeoutMs,
+        );
+        permutation = permutation ?? info.permutation;
+        policyHash = policyHash ?? info.policyHash;
+        console.error(
+          `Discovered GWT build: permutation=${info.permutation} policyHash=${info.policyHash}`,
+        );
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : String(error);
+        console.error(
+          `GWT build auto-discovery failed (${message}); falling back to last-known values.`,
+        );
+      }
+    }
+
+    this.permutation = permutation ?? gwt.fallbackPermutation;
+    this.policyHash = policyHash ?? gwt.fallbackPolicyHash;
   }
 
   async login(): Promise<void> {
@@ -160,7 +204,7 @@ export class LoseItClient {
         headers: {
           "Content-Type": "text/x-gwt-rpc; charset=utf-8",
           "X-GWT-Module-Base": this.config.gwt.moduleBase,
-          "X-GWT-Permutation": this.config.gwt.permutation,
+          "X-GWT-Permutation": this.permutation ?? this.config.gwt.fallbackPermutation,
           "x-Loseit-GWTVersion": "devmode",
           "x-Loseit-HoursFromGMT": String(timezoneOffset),
           Cookie: cookieHeader,
@@ -238,7 +282,8 @@ export class LoseItClient {
     //   21078800 = userId value
     //   7        = username string ref
     //   -5       = timezone offset
-    const { moduleBase, policyHash, serviceClass } = this.config.gwt;
+    const { moduleBase, serviceClass } = this.config.gwt;
+    const policyHash = this.policyHash ?? this.config.gwt.fallbackPolicyHash;
 
     const parts = [
       "7",        // version

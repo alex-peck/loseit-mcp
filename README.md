@@ -12,13 +12,21 @@ Supported capabilities include:
 
 - reading daily calorie summary with budget, eaten, and remaining calories
 - reading weekly calorie history with per-day breakdowns
-- reading food log entries with food names and brands
+- reading food log entries with food name, brand, servings logged, and per-food
+  nutrition for the logged portion (calories, protein, fat, saturated fat,
+  cholesterol, sodium, carbohydrates, fiber, and sugars), plus the day's total calories
 
 ## API Coverage
 
 The current implementation uses the Lose It web app GWT-RPC endpoint (`www.loseit.com/web/service`) with session cookies obtained from `api.loseit.com/account/login`. The iOS app's protobuf API is not used.
 
-The GWT-RPC policy hash and permutation header are tied to the current Lose It web app build. If Lose It deploys a new version, these values may need updating via environment variables.
+The GWT-RPC policy hash and permutation header are tied to the current Lose It
+web app build and change whenever Lose It recompiles the web app. By default the
+server **auto-discovers** both values at startup from the public compiled web app
+assets (the `.nocache.js` bootstrap and the selected `.cache.js` permutation), so
+it keeps working across Lose It deploys with no manual intervention. Auto-discovery
+can be disabled with `LOSEIT_GWT_AUTOFETCH=false`, and either value can be pinned
+explicitly via the environment variables below (an explicit override always wins).
 
 ## Setup
 
@@ -39,8 +47,9 @@ Optional values:
 - `LOSEIT_TIMEZONE` (IANA zone, default `America/Chicago`)
 - `LOSEIT_SESSION_PATH` (default `~/.loseit-mcp/session.json`)
 - `LOSEIT_REQUEST_TIMEOUT_MS` (default `15000`)
-- `LOSEIT_GWT_POLICY_HASH` (override if Lose It deploys a new web build)
-- `LOSEIT_GWT_PERMUTATION` (override if Lose It deploys a new web build)
+- `LOSEIT_GWT_AUTOFETCH` (default `true`; set `false` to disable runtime discovery of the build values below)
+- `LOSEIT_GWT_POLICY_HASH` (pin the policy hash instead of auto-discovering it)
+- `LOSEIT_GWT_PERMUTATION` (pin the permutation strong name instead of auto-discovering it)
 
 ## MCP Setup
 
@@ -79,5 +88,10 @@ If a client does not support `cwd`, pass the Lose It environment variables direc
 ## Notes
 
 - Session cookies are cached to `~/.loseit-mcp/session.json` to avoid re-authenticating on every server start. The cache is created with restricted file permissions.
-- The food log returns food names and brands but does not include per-item calorie or macro breakdowns. Daily totals are available from the daily summary tool.
-- The GWT-RPC response parser uses targeted pattern extraction rather than a full generic deserializer.
+- The food log returns per-food nutrition for the logged portion (calories plus
+  macros) along with the day's total calories. Nutrition is recovered by fully
+  deserializing the GWT-RPC object graph; if Lose It changes its model and the
+  graph can no longer be parsed cleanly, the tool degrades gracefully to
+  name/brand-only results and sets `detailed: false` in the response.
+- The GWT-RPC response parser combines a structural object-graph deserializer
+  (for the food log) with targeted pattern extraction (for summaries).

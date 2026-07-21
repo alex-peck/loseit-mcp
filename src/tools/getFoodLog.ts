@@ -16,7 +16,13 @@ export function registerGetFoodLogTool(
     {
       title: "Get Food Log",
       description:
-        "Returns the food log for a given day: each entry with food name and brand. Use get_daily_summary for calorie totals.",
+        "Returns the food log for a given day. Each entry includes the food name, " +
+        "brand, servings logged (quantity), and per-food nutrition for the logged " +
+        "portion (calories, protein, fat, saturatedFat, cholesterol, sodium, " +
+        "carbohydrates, fiber, sugars; grams except calories/kcal and mg for " +
+        "cholesterol/sodium). Also returns totalCalories for the day. A nutrient is " +
+        "null when Lose It has no value for that food. If 'detailed' is false the " +
+        "server could only recover food names/brands (nutrition unavailable).",
       inputSchema: {
         date: z
           .string()
