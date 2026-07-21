@@ -37,7 +37,7 @@ export function registerGetFoodLogTool(
       try {
         const targetDate = args.date
           ? new Date(args.date)
-          : localTodayAsUTCDate();
+          : localTodayAsUTCDate(client.getTimezone());
         const targetDayNumber = dateToDayNumber(targetDate);
 
         const { raw } = await client.gwtRpc(

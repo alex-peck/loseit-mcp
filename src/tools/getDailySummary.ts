@@ -31,7 +31,7 @@ export function registerGetDailySummaryTool(
       try {
         const targetDate = args.date
           ? new Date(args.date)
-          : localTodayAsUTCDate();
+          : localTodayAsUTCDate(client.getTimezone());
         const targetDayNumber = dateToDayNumber(targetDate);
 
         // getInitializationData returns the current week (with the same-week

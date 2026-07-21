@@ -278,6 +278,11 @@ export class LoseItClient {
     return this.username;
   }
 
+  /** The IANA timezone configured for this account (e.g. "America/New_York"). */
+  getTimezone(): string {
+    return this.config.timezone;
+  }
+
   /**
    * The GWT model field registry auto-derived from the live permutation, or
    * `null` if discovery/parsing failed (callers fall back to the built-in

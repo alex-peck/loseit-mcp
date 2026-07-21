@@ -281,11 +281,24 @@ export function dateToDayNumber(date: Date): number {
 }
 
 /**
- * Return a Date whose UTC year/month/day equal the current local date.
- * This lets `dateToDayNumber` compute the correct day number for "today".
+ * Return a Date whose UTC year/month/day equal the current date in the given
+ * timezone (defaulting to the host's local timezone). This lets
+ * `dateToDayNumber` compute the correct day number for "today" regardless of
+ * the process timezone (e.g. a container running in UTC).
  */
-export function localTodayAsUTCDate(): Date {
+export function localTodayAsUTCDate(timezone?: string): Date {
   const now = new Date();
+  if (timezone) {
+    const parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone: timezone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).formatToParts(now);
+    const get = (t: string) =>
+      Number(parts.find((p) => p.type === t)?.value);
+    return new Date(Date.UTC(get("year"), get("month") - 1, get("day")));
+  }
   return new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()));
 }
 
