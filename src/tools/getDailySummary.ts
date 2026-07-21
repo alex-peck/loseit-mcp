@@ -16,7 +16,7 @@ export function registerGetDailySummaryTool(
     {
       title: "Get Daily Summary",
       description:
-        "Returns a day's calorie summary: calories eaten, base budget, exercise calories earned, and calories remaining (budget + exercise - eaten), plus the same figures for each day of the current week. Numbers are the live totals shown in the Lose It app.",
+        "Returns a day's calorie summary: calories eaten, base budget, exercise calories earned, and calories remaining (budget + exercise - eaten), plus the recorded weight for that day. For a date in the current week the response also includes the same figures for each day of the week; for a historical date it returns just that day. Numbers are the live totals shown in the Lose It app.",
       inputSchema: {
         date: z
           .string()
@@ -29,14 +29,31 @@ export function registerGetDailySummaryTool(
     },
     async (args) => {
       try {
-        const { raw } = await client.gwtRpc("getInitializationData", []);
-
         const targetDate = args.date
           ? new Date(args.date)
           : localTodayAsUTCDate();
         const targetDayNumber = dateToDayNumber(targetDate);
 
-        const result = extractDailySummary(raw, targetDayNumber);
+        // getInitializationData returns the current week (with the same-week
+        // context). If the requested day falls in that week, use it so the
+        // response keeps the full week of entries. Otherwise fetch the specific
+        // day directly via getDailyDetailsForDate so historical dates work.
+        const { raw } = await client.gwtRpc("getInitializationData", []);
+        let result = extractDailySummary(raw, targetDayNumber);
+
+        const inCurrentWeek =
+          result?.weekEntries.some((e) => e.dayNumber === targetDayNumber) ??
+          false;
+
+        if (!inCurrentWeek) {
+          const dated = await client.gwtRpc(
+            "getDailyDetailsForDate",
+            [],
+            false,
+            targetDayNumber,
+          );
+          result = extractDailySummary(dated.raw, targetDayNumber);
+        }
 
         if (!result) {
           return errorResponse(
@@ -44,11 +61,21 @@ export function registerGetDailySummaryTool(
           );
         }
 
-        // Current weight is not at a stable offset in getInitializationData;
-        // read it from getGoalsData's recorded-weight history instead.
+        // Weight is not at a stable offset in the daily response; read it from
+        // getGoalsData's recorded-weight history instead. For the current week
+        // use the reliable current weight; for a historical day use the weight
+        // recorded on or most recently before that day, falling back to the
+        // current weight.
         try {
           const goals = await client.gwtRpc("getGoalsData", []);
-          const weight = extractWeightHistory(goals.raw).currentWeight;
+          const history = extractWeightHistory(goals.raw);
+          let weight = history.currentWeight;
+          if (!inCurrentWeek) {
+            const onOrBefore = history.entries
+              .filter((e) => e.dayNumber <= targetDayNumber)
+              .sort((a, b) => b.dayNumber - a.dayNumber)[0];
+            weight = onOrBefore?.weight ?? history.currentWeight;
+          }
           if (typeof weight === "number") result.weight = weight;
         } catch {
           // Weight is best-effort; leave it at 0 if getGoalsData fails.
