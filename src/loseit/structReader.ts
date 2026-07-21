@@ -203,13 +203,15 @@ export class StructReader {
 
     const short = shortClassName(rawName);
 
-    // byte array
+    // byte array: GWT serializes byte[] as an int length followed by that
+    // many int byte tokens (NOT a single token).
     if (rawName.startsWith("[B")) {
       this.counter += 1;
-      const holder = { _bytes: undefined as unknown };
-      this.objects.set(this.counter, holder);
-      holder._bytes = this.readBytes();
-      return holder;
+      const arr: number[] = [];
+      this.objects.set(this.counter, arr);
+      const n = this.readInt();
+      for (let i = 0; i < n; i++) arr.push(this.readInt());
+      return arr;
     }
 
     // object / primitive arrays

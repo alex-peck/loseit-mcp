@@ -571,12 +571,17 @@ function round(value: number | null, digits: number): number | null {
 function extractFoodLogStructural(
   raw: GwtResponse,
   targetDayNumber: number,
+  registry?: Map<string, StructFieldDef[]> | null,
 ): FoodLogItem[] | null {
+  // The auto-derived registry labels enums as single-int types, so route them
+  // through the type path (empty enum set). The built-in registry relies on the
+  // reader's enum handling and the curated GWT_ENUMS set.
+  const useAuto = registry != null;
   const reader = new StructReader(
     raw.values,
     raw.stringTable,
-    gwtRegistry(),
-    GWT_ENUMS,
+    registry ?? gwtRegistry(),
+    useAuto ? new Set<string>() : GWT_ENUMS,
   );
 
   try {
@@ -759,8 +764,9 @@ function extractFoodLogHeuristic(
 export function extractFoodLog(
   raw: GwtResponse,
   targetDayNumber: number,
+  registry?: Map<string, StructFieldDef[]> | null,
 ): FoodLogResult {
-  const structural = extractFoodLogStructural(raw, targetDayNumber);
+  const structural = extractFoodLogStructural(raw, targetDayNumber, registry);
   const detailed = structural !== null;
   const entries = structural ?? extractFoodLogHeuristic(raw, targetDayNumber);
 

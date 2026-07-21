@@ -45,7 +45,11 @@ export function registerGetFoodLogTool(
           : localTodayAsUTCDate();
         const targetDayNumber = dateToDayNumber(targetDate);
 
-        const result = extractFoodLog(raw, targetDayNumber);
+        const result = extractFoodLog(
+          raw,
+          targetDayNumber,
+          client.getGwtRegistry(),
+        );
         return textResponse(result);
       } catch (error) {
         if (error instanceof GwtParseError) {

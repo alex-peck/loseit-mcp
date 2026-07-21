@@ -3,6 +3,8 @@ import { dirname } from "node:path";
 
 import type { LoseItConfig } from "../config.js";
 import { fetchGwtBuildInfo } from "./gwtBuild.js";
+import { buildGwtRegistryFromCacheJs } from "./gwtRegistry.js";
+import type { StructFieldDef } from "./structReader.js";
 import {
   parseGwtResponse,
   GwtReader,
@@ -49,6 +51,7 @@ export class LoseItClient {
   private username: string | null = null;
   private policyHash: string | null = null;
   private permutation: string | null = null;
+  private gwtRegistry: Map<string, StructFieldDef[]> | null = null;
 
   constructor(private readonly config: LoseItConfig) {}
 
@@ -102,6 +105,18 @@ export class LoseItClient {
         console.error(
           `Discovered GWT build: permutation=${info.permutation} policyHash=${info.policyHash}`,
         );
+        try {
+          this.gwtRegistry = buildGwtRegistryFromCacheJs(info.cacheJs);
+          console.error(
+            `Built GWT model registry from permutation (${this.gwtRegistry.size} types).`,
+          );
+        } catch (regError) {
+          const msg =
+            regError instanceof Error ? regError.message : String(regError);
+          console.error(
+            `GWT registry auto-build failed (${msg}); food logs use the built-in registry.`,
+          );
+        }
       } catch (error) {
         const message =
           error instanceof Error ? error.message : String(error);
@@ -259,6 +274,15 @@ export class LoseItClient {
   getUsername(): string {
     if (!this.username) throw new Error("Not authenticated");
     return this.username;
+  }
+
+  /**
+   * The GWT model field registry auto-derived from the live permutation, or
+   * `null` if discovery/parsing failed (callers fall back to the built-in
+   * hand-maintained registry).
+   */
+  getGwtRegistry(): Map<string, StructFieldDef[]> | null {
+    return this.gwtRegistry;
   }
 
   private buildGwtRequest(

@@ -29,6 +29,8 @@ const HEX32 = "[0-9A-Fa-f]{32}";
 export interface GwtBuildInfo {
   permutation: string;
   policyHash: string;
+  /** The compiled permutation `*.cache.js`, reused to build the model registry. */
+  cacheJs: string;
 }
 
 /**
@@ -176,5 +178,5 @@ export async function fetchGwtBuildInfo(
     );
   }
 
-  return { permutation, policyHash };
+  return { permutation, policyHash, cacheJs };
 }
