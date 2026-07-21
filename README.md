@@ -10,7 +10,8 @@ This project exposes Lose It calorie tracking and nutrition data through MCP usi
 
 Supported capabilities include:
 
-- reading daily calorie summary with budget, eaten, and remaining calories
+- reading daily calorie summary with budget, eaten, and remaining calories for
+  any date (historical dates supported), plus the recorded weight for that day
 - reading weekly calorie history with per-day breakdowns
 - reading food log entries with food name, brand, servings logged, and per-food
   nutrition for the logged portion (calories, protein, fat, saturated fat,
@@ -101,4 +102,10 @@ If a client does not support `cwd`, pass the Lose It environment variables direc
   tool falls back to a built-in registry, and if the graph still can't be parsed
   cleanly it degrades to name/brand-only results and sets `detailed: false`.
 - The GWT-RPC response parser combines a structural object-graph deserializer
-  (for the food log) with targeted pattern extraction (for summaries).
+  for the food log and daily summary, both of which fetch the requested day
+  directly via Lose It's `getDailyDetailsForDate` RPC for arbitrary historical
+  dates. The daily summary keeps the full current-week breakdown when the
+  requested day falls in the current week, and returns just that day otherwise.
+  "Today" is resolved in the account's configured timezone
+  (`LOSEIT_TIMEZONE`, default `America/Chicago`), so the correct day is used
+  even when the server process runs in UTC.
