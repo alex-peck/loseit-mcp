@@ -163,7 +163,7 @@ export function buildGwtTypeRegistry(): Map<string, StructFieldDef[]> {
   ]);
   reg("ExerciseLogEntry", [
     f("burnMetrics", "obj"),
-    f("nullable0", "obj"),
+    f("caloriesBurned", "double"),
     f("dayDate", "obj"),
     f("owner", "obj"),
     f("nullable1", "obj"),
