@@ -195,6 +195,7 @@ export class LoseItClient {
     method: string,
     extraParams: string[],
     retried = false,
+    dayNumber?: number,
   ): Promise<{ raw: GwtResponse; reader: GwtReader }> {
     if (!this.userId || !this.username) {
       throw new Error("Not authenticated — call initialize() first");
@@ -205,6 +206,7 @@ export class LoseItClient {
       method,
       extraParams,
       timezoneOffset,
+      dayNumber,
     );
 
     const url = "https://www.loseit.com/web/service";
@@ -230,7 +232,7 @@ export class LoseItClient {
     } catch (error) {
       if (!retried && error instanceof Error && error.name !== "TimeoutError") {
         await new Promise((r) => setTimeout(r, 1000));
-        return this.gwtRpc(method, extraParams, true);
+        return this.gwtRpc(method, extraParams, true, dayNumber);
       }
       throw new LoseItNetworkError(
         `GWT-RPC request failed for ${method}`,
@@ -241,12 +243,12 @@ export class LoseItClient {
 
     if (response.status === 401 && !retried) {
       await this.login();
-      return this.gwtRpc(method, extraParams, true);
+      return this.gwtRpc(method, extraParams, true, dayNumber);
     }
 
     if (response.status >= 500 && !retried) {
       await new Promise((r) => setTimeout(r, 1000));
-      return this.gwtRpc(method, extraParams, true);
+      return this.gwtRpc(method, extraParams, true, dayNumber);
     }
 
     if (!response.ok) {
@@ -289,6 +291,7 @@ export class LoseItClient {
     method: string,
     _extraParams: string[],
     timezoneOffset: number,
+    dayNumber?: number,
   ): string {
     // Exact format captured from Proxyman traffic for getGoalsData:
     // 7|0|7|moduleBase|policyHash|serviceClass|getGoalsData|tokenType|userIdType|username|1|2|3|4|1|5|5|0|6|21078800|7|-5|
@@ -309,25 +312,67 @@ export class LoseItClient {
     const { moduleBase, serviceClass } = this.config.gwt;
     const policyHash = this.policyHash ?? this.config.gwt.fallbackPolicyHash;
 
+    const SERVICE_REQUEST_TOKEN =
+      "com.loseit.core.client.service.ServiceRequestToken/1076571655";
+    const USER_ID = "com.loseit.core.client.model.UserId/4281239478";
+    const DAY_DATE = "com.loseit.core.shared.model.DayDate/1611136587";
+
+    // ServiceRequestToken value: concrete type ref, int flag 0, UserId
+    // (type ref + int userId), username string ref, int timezone offset.
+    const serviceRequestTokenValue = [
+      "5",
+      "0",
+      "6",
+      String(this.userId!),
+      "7",
+      String(timezoneOffset),
+    ];
+
+    if (dayNumber === undefined) {
+      const parts = [
+        "7", // version
+        "0", // flags
+        "7", // string table size
+        moduleBase, // string 1
+        policyHash, // string 2
+        serviceClass, // string 3
+        method, // string 4
+        SERVICE_REQUEST_TOKEN, // string 5
+        USER_ID, // string 6
+        this.username!, // string 7
+        "1", "2", "3", "4", // call refs: moduleBase, policyHash, service, method
+        "1", // param count
+        "5", // param type: ServiceRequestToken
+        ...serviceRequestTokenValue,
+      ];
+      return parts.join("|") + "|";
+    }
+
+    // Two-param methods like getDailyDetailsForDate(ServiceRequestToken,
+    // DayDate). DayDate serializes as { Date a; int dayNumber; int gmtOffset }.
+    // The app sends a null Date and keys the day off the day number, so the
+    // value is: concrete type ref, null Date (0), dayNumber, gmtOffset.
     const parts = [
-      "7",        // version
-      "0",        // flags
-      "7",        // string table size
+      "7", // version
+      "0", // flags
+      "8", // string table size
       moduleBase, // string 1
       policyHash, // string 2
       serviceClass, // string 3
-      method,     // string 4
-      "com.loseit.core.client.service.ServiceRequestToken/1076571655", // string 5
-      "com.loseit.core.client.model.UserId/4281239478", // string 6
+      method, // string 4
+      SERVICE_REQUEST_TOKEN, // string 5
+      USER_ID, // string 6
       this.username!, // string 7
+      DAY_DATE, // string 8
       "1", "2", "3", "4", // call refs: moduleBase, policyHash, service, method
-      "1",        // param count
-      "5",        // param type: ServiceRequestToken
-      "5", "0",   // token: type ref, value
-      "6",        // UserId type ref
-      String(this.userId!), // userId value
-      "7",        // username ref
-      String(timezoneOffset), // timezone offset
+      "2", // param count
+      "5", // param 1 type: ServiceRequestToken
+      "8", // param 2 type: DayDate
+      ...serviceRequestTokenValue, // param 1 value
+      "8", // param 2 value: concrete DayDate type ref
+      "0", // Date a = null
+      String(dayNumber), // int dayNumber
+      String(timezoneOffset), // int gmtOffset
     ];
 
     return parts.join("|") + "|";

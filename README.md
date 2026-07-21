@@ -89,7 +89,10 @@ If a client does not support `cwd`, pass the Lose It environment variables direc
 
 - Session cookies are cached to `~/.loseit-mcp/session.json` to avoid re-authenticating on every server start. The cache is created with restricted file permissions.
 - The food log returns per-food nutrition for the logged portion (calories plus
-  macros) along with the day's total calories. Nutrition is recovered by fully
+  macros) along with the day's total calories for any requested date (not just
+  the current week). The tool fetches the requested day directly via Lose It's
+  `getDailyDetailsForDate` RPC, so arbitrary historical dates are supported.
+  Nutrition is recovered by fully
   deserializing the GWT-RPC object graph. The model field layouts are
   auto-generated at startup from Lose It's compiled permutation JavaScript (the
   generated field serializers are the ground truth for field order/types), so

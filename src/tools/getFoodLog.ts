@@ -35,15 +35,17 @@ export function registerGetFoodLogTool(
     },
     async (args) => {
       try {
-        const { raw } = await client.gwtRpc(
-          "getInitializationData",
-          [],
-        );
-
         const targetDate = args.date
           ? new Date(args.date)
           : localTodayAsUTCDate();
         const targetDayNumber = dateToDayNumber(targetDate);
+
+        const { raw } = await client.gwtRpc(
+          "getDailyDetailsForDate",
+          [],
+          false,
+          targetDayNumber,
+        );
 
         const result = extractFoodLog(
           raw,
