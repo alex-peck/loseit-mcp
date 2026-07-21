@@ -40,17 +40,16 @@ function findStringRef(stringTable: string[], prefix: string): number {
 }
 
 // ---------------------------------------------------------------------------
-// getGoalsData -> Daily Summary
+// getInitializationData -> Daily Summary
 // ---------------------------------------------------------------------------
 
 export interface DailyEntry {
   date: string;
   dayNumber: number;
-  weight: number;
-  totalBudget: number;
+  caloriesBudget: number;
   caloriesEaten: number;
-  totalCaloriesEaten: number;
   exerciseCalories: number;
+  caloriesRemaining: number;
 }
 
 export interface DailySummaryResult {
@@ -59,82 +58,93 @@ export interface DailySummaryResult {
   weight: number;
   caloriesBudget: number;
   caloriesEaten: number;
-  caloriesRemaining: number;
   exerciseCalories: number;
+  caloriesRemaining: number;
   weekEntries: DailyEntry[];
 }
 
 /**
- * Extract daily summary from getGoalsData response.
+ * Extract the daily calorie summary from a `getInitializationData` response.
  *
- * Each day number appears twice (DailyLogEntry + DailyLogGoalsState), ~16
- * positions apart. From the first dayNumber at position X:
- *   X+5: currentWeight, X+6: totalBudget
- *   X+11: caloriesEaten, X+12: totalCaloriesEaten
- *   X+13: exerciseCalories, X+14: exerciseMinutes
- *   X+16: same dayNumber (confirms match)
+ * The live per-day totals live in `DailyLogGoalsState` blocks in this response
+ * (the food-log endpoint), NOT in `getGoalsData` — whose calories/exercise
+ * fields are a lagging snapshot that can be hours stale relative to the app.
+ *
+ * Anchored on the `DailyLogGoalsState/` class ref (its 1-based index in the
+ * string table). Relative to that marker at position M:
+ *   M-1: base calorie budget (double)
+ *   M+1, M+2: calories eaten (duplicated int/double pair)
+ *   M+3, M+4: exercise calories (duplicated int/double pair)
+ *   M+6: the DayDate's day number
+ *
+ * The duplicated numeric pairs + a valid day number 6 slots on form a
+ * structural signature that reliably distinguishes a real class marker from a
+ * data value that merely equals the class-ref index. `weight` is populated by
+ * the caller (from `getGoalsData`) since it is not at a stable offset here.
  */
 export function extractDailySummary(
   raw: GwtResponse,
   targetDayNumber: number,
 ): DailySummaryResult | null {
-  const { values } = raw;
-  const entries: DailyEntry[] = [];
-  const seenDays = new Set<number>();
+  const { values, stringTable } = raw;
 
-  for (let i = 0; i < values.length - 16; i++) {
-    const val = values[i];
-    if (!isDayNumber(val)) continue;
+  const goalsStateRef = findStringRef(
+    stringTable,
+    "com.loseit.core.client.model.DailyLogGoalsState/",
+  );
+  if (goalsStateRef < 0) return null;
 
-    const tz = values[i - 1];
-    const dayId = values[i + 1];
-    if (typeof tz !== "number" || tz < -12 || tz > 14) continue;
-    if (typeof dayId !== "string") continue;
-    if (values[i + 16] !== val) continue;
+  const byDay = new Map<number, DailyEntry>();
 
-    const dayNumber = val;
-    if (seenDays.has(dayNumber)) continue;
-    seenDays.add(dayNumber);
+  for (let m = 1; m < values.length - 6; m++) {
+    if (values[m] !== goalsStateRef) continue;
 
-    const weight = values[i + 5];
-    const totalBudget = values[i + 6];
-    const caloriesEaten = values[i + 11];
-    const totalCaloriesEaten = values[i + 12];
-    const exerciseCalories = values[i + 13];
+    const baseBudget = values[m - 1];
+    const eaten = values[m + 1];
+    const eatenDup = values[m + 2];
+    const exercise = values[m + 3];
+    const exerciseDup = values[m + 4];
+    const dayNumber = values[m + 6];
 
-    if (typeof totalBudget !== "number") continue;
-    if (typeof caloriesEaten !== "number") continue;
+    if (
+      typeof baseBudget !== "number" ||
+      baseBudget <= 0 ||
+      typeof eaten !== "number" ||
+      eaten !== eatenDup ||
+      typeof exercise !== "number" ||
+      exercise !== exerciseDup ||
+      !isDayNumber(dayNumber)
+    ) {
+      continue;
+    }
 
-    entries.push({
+    if (byDay.has(dayNumber)) continue;
+
+    const budget = Math.round(baseBudget);
+    byDay.set(dayNumber, {
       date: dayNumberToDateString(dayNumber),
       dayNumber,
-      weight: isWeight(weight) ? weight : 0,
-      totalBudget: Math.round(totalBudget * 100) / 100,
-      caloriesEaten: Math.round(caloriesEaten),
-      totalCaloriesEaten: Math.round(
-        typeof totalCaloriesEaten === "number" ? totalCaloriesEaten : caloriesEaten,
-      ),
-      exerciseCalories: Math.round(
-        typeof exerciseCalories === "number" ? exerciseCalories : 0,
-      ),
+      caloriesBudget: budget,
+      caloriesEaten: Math.round(eaten),
+      exerciseCalories: Math.round(exercise),
+      caloriesRemaining: Math.round(baseBudget + exercise - eaten),
     });
   }
 
-  entries.sort((a, b) => a.dayNumber - b.dayNumber);
+  const entries = [...byDay.values()].sort((a, b) => a.dayNumber - b.dayNumber);
+  if (entries.length === 0) return null;
 
   const target = entries.find((e) => e.dayNumber === targetDayNumber);
-  if (!target && entries.length === 0) return null;
-
   const effective = target ?? entries[entries.length - 1]!;
 
   return {
     date: effective.date,
     dayNumber: effective.dayNumber,
-    weight: effective.weight,
-    caloriesBudget: Math.round(effective.totalBudget),
+    weight: 0,
+    caloriesBudget: effective.caloriesBudget,
     caloriesEaten: effective.caloriesEaten,
-    caloriesRemaining: Math.round(effective.totalBudget) - effective.caloriesEaten,
     exerciseCalories: effective.exerciseCalories,
+    caloriesRemaining: effective.caloriesRemaining,
     weekEntries: entries,
   };
 }

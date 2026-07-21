@@ -3,7 +3,7 @@ import { z } from "zod";
 
 import type { LoseItClient } from "../loseit/client.js";
 import { dateToDayNumber, localTodayAsUTCDate, GwtParseError } from "../loseit/gwt.js";
-import { extractDailySummary } from "../loseit/extractors.js";
+import { extractDailySummary, extractWeightHistory } from "../loseit/extractors.js";
 import { READ_ONLY_TOOL_ANNOTATIONS } from "./common.js";
 import { errorResponse, textResponse } from "./response.js";
 
@@ -16,7 +16,7 @@ export function registerGetDailySummaryTool(
     {
       title: "Get Daily Summary",
       description:
-        "Returns today's calorie and macro summary: calories eaten/remaining, budget, and per-day entries for the current week.",
+        "Returns a day's calorie summary: calories eaten, base budget, exercise calories earned, and calories remaining (budget + exercise - eaten), plus the same figures for each day of the current week. Numbers are the live totals shown in the Lose It app.",
       inputSchema: {
         date: z
           .string()
@@ -29,7 +29,7 @@ export function registerGetDailySummaryTool(
     },
     async (args) => {
       try {
-        const { raw } = await client.gwtRpc("getGoalsData", []);
+        const { raw } = await client.gwtRpc("getInitializationData", []);
 
         const targetDate = args.date
           ? new Date(args.date)
@@ -42,6 +42,16 @@ export function registerGetDailySummaryTool(
           return errorResponse(
             new Error("No daily summary data found for the requested date"),
           );
+        }
+
+        // Current weight is not at a stable offset in getInitializationData;
+        // read it from getGoalsData's recorded-weight history instead.
+        try {
+          const goals = await client.gwtRpc("getGoalsData", []);
+          const weight = extractWeightHistory(goals.raw).currentWeight;
+          if (typeof weight === "number") result.weight = weight;
+        } catch {
+          // Weight is best-effort; leave it at 0 if getGoalsData fails.
         }
 
         return textResponse(result);
