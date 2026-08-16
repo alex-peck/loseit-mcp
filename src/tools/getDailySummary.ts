@@ -2,10 +2,50 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
 import type { LoseItClient } from "../loseit/client.js";
+import type { GwtResponse } from "../loseit/gwt.js";
 import { dateToDayNumber, localTodayAsUTCDate, GwtParseError } from "../loseit/gwt.js";
-import { extractDailySummary, extractWeightHistory } from "../loseit/extractors.js";
+import { extractDailyRange, extractDailySummary } from "../loseit/extractors.js";
 import { READ_ONLY_TOOL_ANNOTATIONS } from "./common.js";
 import { errorResponse, textResponse } from "./response.js";
+
+/** How far back to look for a carried-forward weight when a day has no weigh-in. */
+const WEIGHT_LOOKBACK_DAYS = 30;
+
+/**
+ * Resolve the weight to report for `targetDayNumber`.
+ *
+ * Each weigh-in hangs off the `DailyDetails` record for the day it was recorded
+ * on, so reading it structurally attributes it to the correct date. If that day
+ * has no weigh-in, carry forward the most recent one within the lookback
+ * window, matching what the Lose It app shows.
+ */
+async function resolveWeight(
+  client: LoseItClient,
+  targetDayNumber: number,
+  primary: GwtResponse,
+): Promise<number | null> {
+  const registry = client.getGwtRegistry();
+
+  const onDay = extractDailyRange(primary, registry).days.find(
+    (d) => d.dayNumber === targetDayNumber,
+  )?.weight;
+  if (typeof onDay === "number") return onDay;
+
+  try {
+    const responses = await client.getDailyDetailsRange(
+      targetDayNumber - WEIGHT_LOOKBACK_DAYS + 1,
+      targetDayNumber,
+    );
+    const recent = responses
+      .flatMap((raw) => extractDailyRange(raw, registry).days)
+      .filter((d) => d.weight !== null && d.dayNumber <= targetDayNumber)
+      .sort((a, b) => b.dayNumber - a.dayNumber)[0];
+    return recent?.weight ?? null;
+  } catch {
+    // Weight is best-effort; the calorie figures are the point of this tool.
+    return null;
+  }
+}
 
 export function registerGetDailySummaryTool(
   server: McpServer,
@@ -16,7 +56,7 @@ export function registerGetDailySummaryTool(
     {
       title: "Get Daily Summary",
       description:
-        "Returns a day's calorie summary: calories eaten, base budget, exercise calories earned, and calories remaining (budget + exercise - eaten), plus the recorded weight for that day. For a date in the current week the response also includes the same figures for each day of the week; for a historical date it returns just that day. Numbers are the live totals shown in the Lose It app.",
+        "Returns a single day's calorie summary: calories eaten, base budget, exercise calories earned, and calories remaining (budget + exercise - eaten), plus the recorded weight for that day. For a date in the current week the response also includes the same figures for each day of the week; for a historical date it returns just that day. Numbers are the live totals shown in the Lose It app. For anything spanning more than a day or two, use loseit_get_daily_summaries instead — it returns a whole date range in a single request.",
       inputSchema: {
         date: z
           .string()
@@ -39,6 +79,7 @@ export function registerGetDailySummaryTool(
         // response keeps the full week of entries. Otherwise fetch the specific
         // day directly via getDailyDetailsForDate so historical dates work.
         const { raw } = await client.gwtRpc("getInitializationData", []);
+        let payload = raw;
         let result = extractDailySummary(raw, targetDayNumber);
 
         const inCurrentWeek =
@@ -52,6 +93,7 @@ export function registerGetDailySummaryTool(
             false,
             targetDayNumber,
           );
+          payload = dated.raw;
           result = extractDailySummary(dated.raw, targetDayNumber);
         }
 
@@ -61,25 +103,8 @@ export function registerGetDailySummaryTool(
           );
         }
 
-        // Weight is not at a stable offset in the daily response; read it from
-        // getGoalsData's recorded-weight history instead. For the current week
-        // use the reliable current weight; for a historical day use the weight
-        // recorded on or most recently before that day, falling back to the
-        // current weight.
-        try {
-          const goals = await client.gwtRpc("getGoalsData", []);
-          const history = extractWeightHistory(goals.raw);
-          let weight = history.currentWeight;
-          if (!inCurrentWeek) {
-            const onOrBefore = history.entries
-              .filter((e) => e.dayNumber <= targetDayNumber)
-              .sort((a, b) => b.dayNumber - a.dayNumber)[0];
-            weight = onOrBefore?.weight ?? history.currentWeight;
-          }
-          if (typeof weight === "number") result.weight = weight;
-        } catch {
-          // Weight is best-effort; leave it at 0 if getGoalsData fails.
-        }
+        const weight = await resolveWeight(client, targetDayNumber, payload);
+        if (weight !== null) result.weight = weight;
 
         return textResponse(result);
       } catch (error) {

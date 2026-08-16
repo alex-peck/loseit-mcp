@@ -10,12 +10,32 @@ This project exposes Lose It calorie tracking and nutrition data through MCP usi
 
 Supported capabilities include:
 
-- reading daily calorie summary with budget, eaten, and remaining calories for
-  any date (historical dates supported), plus the recorded weight for that day
-- reading weekly calorie history with per-day breakdowns
-- reading food log entries with food name, brand, servings logged, and per-food
-  nutrition for the logged portion (calories, protein, fat, saturated fat,
-  cholesterol, sodium, carbohydrates, fiber, and sugars), plus the day's total calories
+- **bulk calorie history** — one record per day across an arbitrary date range
+  in a single request, with aggregate statistics
+- **bulk nutrition history** — per-day macro/micronutrient totals across a range
+- **bulk weight history** — every weigh-in in a range, with trend and rolling average
+- **food aggregation** — the most-logged / highest-calorie foods across a range
+- reading a single day's calorie summary with budget, eaten, and remaining
+  calories for any date (historical dates supported), plus the recorded weight
+- reading a single day's food log entries with food name, brand, servings
+  logged, and per-food nutrition for the logged portion (calories, protein, fat,
+  saturated fat, cholesterol, sodium, carbohydrates, fiber, and sugars)
+
+## Tools
+
+| Tool | Scope | Purpose |
+| --- | --- | --- |
+| `loseit_get_daily_summaries` | range | One record per day: eaten, budget, exercise, remaining, weight, food count — plus totals, mean/median/min/max, days over budget, and weight trend. **The tool to use for any multi-day analysis.** |
+| `loseit_get_nutrition_history` | range | Per-day totals for calories, protein, fat, saturated fat, carbohydrates, fiber, sugars, sodium, and cholesterol, with per-nutrient statistics. |
+| `loseit_get_weight_history` | range | Every weigh-in with net change, min/max, and a 7-point rolling average. |
+| `loseit_get_top_foods` | range | Foods ranked by total calories or logging frequency, with each food's share of range calories. |
+| `loseit_get_daily_summary` | one day | A single day's calorie summary (plus the week's breakdown for a current-week date). |
+| `loseit_get_food_log` | one day | A single day's individual food entries with per-food nutrition. |
+
+Every range tool accepts the same arguments: `startDate` + `endDate`
+(`YYYY-MM-DD`, inclusive), or `days` counting back from `endDate` (which
+defaults to today). The default range is the last 30 days and the maximum span
+is 1100 days.
 
 ## API Coverage
 
@@ -89,6 +109,19 @@ If a client does not support `cwd`, pass the Lose It environment variables direc
 ## Notes
 
 - Session cookies are cached to `~/.loseit-mcp/session.json` to avoid re-authenticating on every server start. The cache is created with restricted file permissions.
+- Bulk range tools are backed by Lose It's own
+  `getDailyDetailsIncludingPendingForDateRange` RPC, which the web app uses to
+  render its multi-day views. One request returns the whole range, so pulling
+  three years of daily calories costs a handful of requests rather than a
+  thousand. Ranges are split into 200-day chunks, because a single very large
+  request can take Lose It over a minute to build from a cold cache while each
+  chunk answers in about a second.
+- Very large GWT-RPC responses are not valid JSON: the server emits them as
+  chunked JavaScript array literals joined with `.concat(...)`. The parser
+  splices those chunks back together, which is what makes multi-year ranges
+  possible.
+- Each day's weigh-in is read from that day's own record in the object graph, so
+  weights are attributed to the correct date.
 - The food log returns per-food nutrition for the logged portion (calories plus
   macros) along with the day's total calories for any requested date (not just
   the current week). The tool fetches the requested day directly via Lose It's

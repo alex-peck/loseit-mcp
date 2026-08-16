@@ -113,6 +113,34 @@ const FOOD_OVERLAY: Record<
   Double: [{ index: 0, name: "v", type: "double" }],
 };
 
+/**
+ * Curated semantic field names for the per-day classes the bulk range
+ * extractor reads. Same contract as {@link FOOD_OVERLAY}: index -> name plus
+ * the type we expect, so a Lose It model change fails loudly instead of
+ * silently returning wrong numbers.
+ */
+const DAILY_OVERLAY: Record<
+  string,
+  Array<{ index: number; name: string; type: StructFieldType }>
+> = {
+  DailyDetails: [
+    { index: 3, name: "dailyLogEntry", type: "obj" },
+    { index: 5, name: "foodEntries", type: "obj" },
+    { index: 10, name: "recordedWeight", type: "obj" },
+  ],
+  DailyLogEntry: [
+    { index: 1, name: "dayDate", type: "obj" },
+    { index: 2, name: "exerciseCalories", type: "double" },
+    { index: 4, name: "caloriesEaten", type: "double" },
+    { index: 6, name: "goalsState", type: "obj" },
+  ],
+  DailyLogGoalsState: [{ index: 0, name: "budget", type: "double" }],
+  RecordedWeight: [
+    { index: 0, name: "dayDate", type: "obj" },
+    { index: 3, name: "weight", type: "double" },
+  ],
+};
+
 export class GwtRegistryError extends Error {
   constructor(message: string) {
     super(message);
@@ -332,27 +360,41 @@ export function buildGwtRegistryFromCacheJs(
     );
   }
 
-  // 6. overlay curated semantic names on the food classes, validating types.
-  for (const [cls, fields] of Object.entries(FOOD_OVERLAY)) {
+  // 6. overlay curated semantic names, validating types.
+  applyOverlay(registry, FOOD_OVERLAY, "Food");
+  applyOverlay(registry, DAILY_OVERLAY, "Daily");
+
+  return registry;
+}
+
+function applyOverlay(
+  registry: Map<string, StructFieldDef[]>,
+  overlay: Record<
+    string,
+    Array<{ index: number; name: string; type: StructFieldType }>
+  >,
+  label: string,
+): void {
+  for (const [cls, fields] of Object.entries(overlay)) {
     const auto = registry.get(cls);
     if (!auto) {
-      throw new GwtRegistryError(`Food class "${cls}" not found in permutation`);
+      throw new GwtRegistryError(
+        `${label} class "${cls}" not found in permutation`,
+      );
     }
     for (const { index, name, type } of fields) {
       const field = auto[index];
       if (!field) {
         throw new GwtRegistryError(
-          `Food class "${cls}" field #${index} (${name}) missing (has ${auto.length} fields)`,
+          `${label} class "${cls}" field #${index} (${name}) missing (has ${auto.length} fields)`,
         );
       }
       if (field.type !== type) {
         throw new GwtRegistryError(
-          `Food class "${cls}" field #${index} (${name}) type ${field.type}, expected ${type} — Lose It model changed`,
+          `${label} class "${cls}" field #${index} (${name}) type ${field.type}, expected ${type} — Lose It model changed`,
         );
       }
       field.name = name;
     }
   }
-
-  return registry;
 }

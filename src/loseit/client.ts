@@ -45,6 +45,34 @@ interface SessionCache {
   timestamp: number;
 }
 
+/**
+ * A parameter for a GWT-RPC call beyond the implicit leading
+ * `ServiceRequestToken`, which every LoseItRemoteService method takes and which
+ * {@link LoseItClient.gwtRpc} always supplies itself.
+ */
+export type GwtParam =
+  | { kind: "dayDate"; dayNumber: number }
+  | { kind: "integer"; value: number };
+
+const GWT_TYPE = {
+  serviceRequestToken:
+    "com.loseit.core.client.service.ServiceRequestToken/1076571655",
+  userId: "com.loseit.core.client.model.UserId/4281239478",
+  dayDate: "com.loseit.core.shared.model.DayDate/1611136587",
+  integer: "java.lang.Integer/3438268394",
+} as const;
+
+/** The GWT type signature a parameter serializes as. */
+function paramTypeName(param: GwtParam): string {
+  return param.kind === "dayDate" ? GWT_TYPE.dayDate : GWT_TYPE.integer;
+}
+
+/** Days per date-range request. Keeps each response fast to build and parse. */
+const RANGE_CHUNK_DAYS = 200;
+
+/** Floor for the date-range request timeout; bulk responses are large. */
+const RANGE_TIMEOUT_MS = 60_000;
+
 export class LoseItClient {
   private cookies = new Map<string, string>();
   private userId: number | null = null;
@@ -191,23 +219,37 @@ export class LoseItClient {
     await this.saveSession();
   }
 
+  /**
+   * Invoke a LoseItRemoteService method.
+   *
+   * `dayNumber` is a shorthand for a single trailing `DayDate` parameter (the
+   * common `...ForDate(token, DayDate)` shape). Methods with other signatures
+   * pass their parameters explicitly via {@link gwtRpcWithParams}.
+   */
   async gwtRpc(
     method: string,
     extraParams: string[],
     retried = false,
     dayNumber?: number,
   ): Promise<{ raw: GwtResponse; reader: GwtReader }> {
+    const params: GwtParam[] =
+      dayNumber === undefined ? [] : [{ kind: "dayDate", dayNumber }];
+    return this.gwtRpcWithParams(method, params, retried);
+  }
+
+  /** Invoke a LoseItRemoteService method with explicitly typed parameters. */
+  async gwtRpcWithParams(
+    method: string,
+    params: GwtParam[],
+    retried = false,
+    timeoutMs = this.config.requestTimeoutMs,
+  ): Promise<{ raw: GwtResponse; reader: GwtReader }> {
     if (!this.userId || !this.username) {
       throw new Error("Not authenticated — call initialize() first");
     }
 
     const timezoneOffset = getTimezoneOffset(this.config.timezone);
-    const requestBody = this.buildGwtRequest(
-      method,
-      extraParams,
-      timezoneOffset,
-      dayNumber,
-    );
+    const requestBody = this.buildGwtRequest(method, params, timezoneOffset);
 
     const url = "https://www.loseit.com/web/service";
     const cookieHeader = Array.from(this.cookies.entries())
@@ -227,12 +269,12 @@ export class LoseItClient {
           Cookie: cookieHeader,
         },
         body: requestBody,
-        signal: AbortSignal.timeout(this.config.requestTimeoutMs),
+        signal: AbortSignal.timeout(timeoutMs),
       });
     } catch (error) {
       if (!retried && error instanceof Error && error.name !== "TimeoutError") {
         await new Promise((r) => setTimeout(r, 1000));
-        return this.gwtRpc(method, extraParams, true, dayNumber);
+        return this.gwtRpcWithParams(method, params, true, timeoutMs);
       }
       throw new LoseItNetworkError(
         `GWT-RPC request failed for ${method}`,
@@ -243,12 +285,12 @@ export class LoseItClient {
 
     if (response.status === 401 && !retried) {
       await this.login();
-      return this.gwtRpc(method, extraParams, true, dayNumber);
+      return this.gwtRpcWithParams(method, params, true, timeoutMs);
     }
 
     if (response.status >= 500 && !retried) {
       await new Promise((r) => setTimeout(r, 1000));
-      return this.gwtRpc(method, extraParams, true, dayNumber);
+      return this.gwtRpcWithParams(method, params, true, timeoutMs);
     }
 
     if (!response.ok) {
@@ -266,6 +308,57 @@ export class LoseItClient {
     const reader = new GwtReader(parsed.values, parsed.stringTable);
 
     return { raw: parsed, reader };
+  }
+
+  /**
+   * Fetch every day in `[startDayNumber, endDayNumber]`.
+   *
+   * Lose It's web app uses this RPC to render its multi-day views, so it
+   * returns years of history far more cheaply than looping over the single-day
+   * `getDailyDetailsForDate`. The leading Integer parameter is the user id; the
+   * server rejects the call with a profile error for any other value.
+   *
+   * Long ranges are split into chunks: a single very large request can take
+   * Lose It well over a minute to build when its cache is cold, whereas each
+   * chunk answers in about a second and gets the normal per-request retry.
+   * One response is returned per chunk, in chronological order.
+   */
+  async getDailyDetailsRange(
+    startDayNumber: number,
+    endDayNumber: number,
+  ): Promise<GwtResponse[]> {
+    if (endDayNumber < startDayNumber) {
+      throw new Error("endDayNumber must be on or after startDayNumber");
+    }
+
+    // Bulk responses are legitimately heavy, so allow more time than the
+    // per-request default without raising it for every other call.
+    const timeoutMs = Math.max(this.config.requestTimeoutMs, RANGE_TIMEOUT_MS);
+
+    const responses: GwtResponse[] = [];
+    for (
+      let chunkStart = startDayNumber;
+      chunkStart <= endDayNumber;
+      chunkStart += RANGE_CHUNK_DAYS
+    ) {
+      const chunkEnd = Math.min(
+        chunkStart + RANGE_CHUNK_DAYS - 1,
+        endDayNumber,
+      );
+      const { raw } = await this.gwtRpcWithParams(
+        "getDailyDetailsIncludingPendingForDateRange",
+        [
+          { kind: "integer", value: this.getUserId() },
+          { kind: "dayDate", dayNumber: chunkStart },
+          { kind: "dayDate", dayNumber: chunkEnd },
+        ],
+        false,
+        timeoutMs,
+      );
+      responses.push(raw);
+    }
+
+    return responses;
   }
 
   getUserId(): number {
@@ -294,9 +387,8 @@ export class LoseItClient {
 
   private buildGwtRequest(
     method: string,
-    _extraParams: string[],
+    params: GwtParam[],
     timezoneOffset: number,
-    dayNumber?: number,
   ): string {
     // Exact format captured from Proxyman traffic for getGoalsData:
     // 7|0|7|moduleBase|policyHash|serviceClass|getGoalsData|tokenType|userIdType|username|1|2|3|4|1|5|5|0|6|21078800|7|-5|
@@ -314,70 +406,68 @@ export class LoseItClient {
     //   21078800 = userId value
     //   7        = username string ref
     //   -5       = timezone offset
+    //
+    // Additional declared parameters follow the same shape: every parameter's
+    // declared type name is emitted (as a string-table ref) in the header, and
+    // the values follow in order. The string table is built dynamically so any
+    // method arity/signature can be expressed.
     const { moduleBase, serviceClass } = this.config.gwt;
     const policyHash = this.policyHash ?? this.config.gwt.fallbackPolicyHash;
 
-    const SERVICE_REQUEST_TOKEN =
-      "com.loseit.core.client.service.ServiceRequestToken/1076571655";
-    const USER_ID = "com.loseit.core.client.model.UserId/4281239478";
-    const DAY_DATE = "com.loseit.core.shared.model.DayDate/1611136587";
+    const stringTable: string[] = [];
+    const ref = (value: string): string => {
+      let index = stringTable.indexOf(value);
+      if (index < 0) index = stringTable.push(value) - 1;
+      return String(index + 1);
+    };
+
+    const moduleRef = ref(moduleBase);
+    const policyRef = ref(policyHash);
+    const serviceRef = ref(serviceClass);
+    const methodRef = ref(method);
+    const tokenTypeRef = ref(GWT_TYPE.serviceRequestToken);
+    const userIdRef = ref(GWT_TYPE.userId);
+    const usernameRef = ref(this.username!);
+    // Declared parameter types are emitted before any values, matching the
+    // order the generated GWT proxy writes them.
+    const paramTypeRefs = params.map((p) => ref(paramTypeName(p)));
 
     // ServiceRequestToken value: concrete type ref, int flag 0, UserId
     // (type ref + int userId), username string ref, int timezone offset.
-    const serviceRequestTokenValue = [
-      "5",
+    const values: string[] = [
+      tokenTypeRef,
       "0",
-      "6",
+      userIdRef,
       String(this.userId!),
-      "7",
+      usernameRef,
       String(timezoneOffset),
     ];
 
-    if (dayNumber === undefined) {
-      const parts = [
-        "7", // version
-        "0", // flags
-        "7", // string table size
-        moduleBase, // string 1
-        policyHash, // string 2
-        serviceClass, // string 3
-        method, // string 4
-        SERVICE_REQUEST_TOKEN, // string 5
-        USER_ID, // string 6
-        this.username!, // string 7
-        "1", "2", "3", "4", // call refs: moduleBase, policyHash, service, method
-        "1", // param count
-        "5", // param type: ServiceRequestToken
-        ...serviceRequestTokenValue,
-      ];
-      return parts.join("|") + "|";
+    for (const [index, param] of params.entries()) {
+      const typeRef = paramTypeRefs[index]!;
+      if (param.kind === "dayDate") {
+        // DayDate serializes as { Date a; int dayNumber; int gmtOffset }. The
+        // app sends a null Date and keys the day off the day number.
+        values.push(typeRef, "0", String(param.dayNumber), String(timezoneOffset));
+      } else {
+        // Boxed java.lang.Integer: concrete type ref followed by the int value.
+        values.push(typeRef, String(param.value));
+      }
     }
 
-    // Two-param methods like getDailyDetailsForDate(ServiceRequestToken,
-    // DayDate). DayDate serializes as { Date a; int dayNumber; int gmtOffset }.
-    // The app sends a null Date and keys the day off the day number, so the
-    // value is: concrete type ref, null Date (0), dayNumber, gmtOffset.
     const parts = [
-      "7", // version
+      "7", // stream version
       "0", // flags
-      "8", // string table size
-      moduleBase, // string 1
-      policyHash, // string 2
-      serviceClass, // string 3
-      method, // string 4
-      SERVICE_REQUEST_TOKEN, // string 5
-      USER_ID, // string 6
-      this.username!, // string 7
-      DAY_DATE, // string 8
-      "1", "2", "3", "4", // call refs: moduleBase, policyHash, service, method
-      "2", // param count
-      "5", // param 1 type: ServiceRequestToken
-      "8", // param 2 type: DayDate
-      ...serviceRequestTokenValue, // param 1 value
-      "8", // param 2 value: concrete DayDate type ref
-      "0", // Date a = null
-      String(dayNumber), // int dayNumber
-      String(timezoneOffset), // int gmtOffset
+      String(stringTable.length),
+      ...stringTable,
+      moduleRef,
+      policyRef,
+      serviceRef,
+      methodRef,
+      String(1 + params.length), // param count (token + declared params)
+      tokenTypeRef,
+      ...paramTypeRefs,
+      ...values,
     ];
 
     return parts.join("|") + "|";

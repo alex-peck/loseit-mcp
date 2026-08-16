@@ -34,6 +34,25 @@ describe("parseGwtResponse", () => {
       GwtParseError,
     );
   });
+
+  it("splices chunked .concat(...) payloads back into one array", () => {
+    // Large responses are emitted as [c1].concat([c2],[c3]) instead of JSON.
+    const raw = '//OK[1,2].concat([3,4],[5,["str1","str2"],0,7])';
+    const res = parseGwtResponse(raw);
+
+    assert.equal(res.version, 7);
+    assert.equal(res.flags, 0);
+    assert.deepEqual(res.stringTable, ["str1", "str2"]);
+    assert.deepEqual(res.values, [1, 2, 3, 4, 5]);
+  });
+
+  it("does not treat a chunk-boundary sequence inside a string as structural", () => {
+    const raw = '//OK[1,"a],[b"].concat([2,["Lay\'s ],[ Chips"],0,7])';
+    const res = parseGwtResponse(raw);
+
+    assert.deepEqual(res.values, [1, "a],[b", 2]);
+    assert.deepEqual(res.stringTable, ["Lay's ],[ Chips"]);
+  });
 });
 
 describe("GwtReader", () => {

@@ -22,6 +22,71 @@ export class GwtParseError extends Error {
   }
 }
 
+/**
+ * Very large GWT-RPC payloads are not emitted as a single JSON array literal.
+ * The server splits them into chunks joined with JavaScript `Array.concat`:
+ *
+ *   //OK[a,b,c].concat([d,e,f],[g,h,i],[...,0,7])
+ *
+ * This keeps each literal below JS-engine array-literal limits, but it is no
+ * longer valid JSON. Splice the chunks back into a single array literal so
+ * responses of any size (e.g. multi-year date ranges) parse normally.
+ *
+ * The scan is string-aware: chunk boundaries are only recognised at array
+ * depth 0, so a `],[` sequence inside a food name is never mistaken for one.
+ */
+function unwrapConcatChunks(jsonStr: string): string {
+  if (!jsonStr.includes(".concat(")) return jsonStr;
+
+  let out = "";
+  let depth = 0;
+  let inString = false;
+
+  for (let i = 0; i < jsonStr.length; i++) {
+    const ch = jsonStr[i]!;
+
+    if (inString) {
+      out += ch;
+      if (ch === "\\") {
+        out += jsonStr[i + 1] ?? "";
+        i++;
+      } else if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (ch === '"') {
+      inString = true;
+      out += ch;
+      continue;
+    }
+
+    if (ch === "[") {
+      // Only the very first chunk keeps its opening bracket; later chunks are
+      // merged into it.
+      if (depth > 0 || out.length === 0) out += ch;
+      else out += ",";
+      depth++;
+      continue;
+    }
+
+    if (ch === "]") {
+      depth--;
+      // A depth-0 close ends a chunk; the merged array is closed once at the end.
+      if (depth > 0) out += ch;
+      continue;
+    }
+
+    // Structural glue between chunks (`.concat(`, `,`, `)`) lives at depth 0.
+    if (depth === 0) continue;
+
+    out += ch;
+  }
+
+  return out + "]";
+}
+
 export function parseGwtResponse(raw: string): GwtResponse {
   const trimmed = raw.trim();
 
@@ -37,7 +102,7 @@ export function parseGwtResponse(raw: string): GwtResponse {
     );
   }
 
-  const jsonStr = trimmed.slice(4);
+  const jsonStr = unwrapConcatChunks(trimmed.slice(4));
   let parsed: unknown[];
 
   try {

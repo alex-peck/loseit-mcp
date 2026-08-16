@@ -150,137 +150,6 @@ export function extractDailySummary(
 }
 
 // ---------------------------------------------------------------------------
-// getGoalsData -> Weight History
-// ---------------------------------------------------------------------------
-
-export interface WeightEntry {
-  date: string;
-  dayNumber: number;
-  weight: number;
-}
-
-export interface WeightHistoryResult {
-  currentWeight: number | null;
-  goalWeight: number | null;
-  baseBudget: number | null;
-  entries: WeightEntry[];
-}
-
-/**
- * Extract weight history from getGoalsData response.
- *
- * RecordedWeight entries are identified by the RecordedWeight class ref.
- * Pattern: ..., tz, dayNumber, dayId, DateRef, DayDateRef, RecordedWeightRef, weight, ...
- *
- * GoalsSummary contains currentWeight, goalWeight, baseBudget. We find these
- * by looking for the pattern: currentWeight(187.4), baseBudget(2050) near the
- * GoalsSummary class ref.
- */
-export function extractWeightHistory(raw: GwtResponse): WeightHistoryResult {
-  const { values, stringTable } = raw;
-
-  const recordedWeightRef = findStringRef(stringTable, "com.loseit.core.client.model.RecordedWeight/");
-  const goalsSummaryRef = findStringRef(stringTable, "com.loseit.core.client.model.GoalsSummary/");
-
-  const entries: WeightEntry[] = [];
-  const seenDays = new Set<number>();
-
-  // Find RecordedWeight entries
-  for (let i = 0; i < values.length - 1; i++) {
-    if (values[i] !== recordedWeightRef) continue;
-
-    const weight = values[i + 1];
-    if (!isWeight(weight)) continue;
-
-    // Look backwards for the day number
-    let dayNumber: number | null = null;
-    for (let j = i - 1; j >= Math.max(0, i - 6); j--) {
-      if (isDayNumber(values[j])) {
-        dayNumber = values[j] as number;
-        break;
-      }
-    }
-
-    if (dayNumber === null || seenDays.has(dayNumber)) continue;
-    seenDays.add(dayNumber);
-
-    entries.push({
-      date: dayNumberToDateString(dayNumber),
-      dayNumber,
-      weight,
-    });
-  }
-
-  // Find GoalsSummary data: look for GoalsSummary class ref, then find
-  // currentWeight and goalWeight nearby.
-  //
-  // The GoalsSummary fields are serialized LEFT of (before) the class ref
-  // in the values array. The pattern near the ref:
-  //   ... currentWeight, baseBudget, ... [enum objects] ..., GoalsSummaryRef
-  //
-  // We find them by scanning LEFT from GoalsSummaryRef for weight-like
-  // doubles and the baseBudget value.
-  let currentWeight: number | null = null;
-  let goalWeight: number | null = null;
-  let baseBudget: number | null = null;
-
-  for (let i = 0; i < values.length; i++) {
-    if (values[i] !== goalsSummaryRef) continue;
-
-    // Scan left for weight values and budget
-    // The GoalsSummary has: currentWeight, goalWeight, then nested objects,
-    // then baseBudget. In the serialized array, baseBudget appears FIRST
-    // (leftmost) since it's the last field and GWT reads right-to-left.
-    //
-    // Pattern observed in data:
-    //   ... 187.4(cw), 2050(baseBudget), Double, ..., GoalsSummaryRef
-    // And goalWeight(179) appears somewhere between.
-
-    // Collect all weight-like values and budget-like values in the 30
-    // positions to the left
-    const weights: Array<{ value: number; pos: number }> = [];
-    const budgets: Array<{ value: number; pos: number }> = [];
-
-    for (let j = i - 1; j >= Math.max(0, i - 30); j--) {
-      const v = values[j];
-      if (typeof v !== "number") continue;
-      if (isWeight(v)) {
-        weights.push({ value: v, pos: j });
-      } else if (v >= 1000 && v <= 5000) {
-        budgets.push({ value: v, pos: j });
-      }
-    }
-
-    // The currentWeight should be the weight closest to the ref (rightmost)
-    if (weights.length >= 1) {
-      currentWeight = weights[0]!.value; // closest to ref
-    }
-
-    // The goalWeight should be the next weight value
-    // It might also appear as an integer near other values
-    // Scan for a reasonable goalWeight (100-300 range) that's different
-    // from currentWeight
-    for (let j = i - 1; j >= Math.max(0, i - 30); j--) {
-      const v = values[j];
-      if (typeof v === "number" && v >= 100 && v <= 400 && v !== currentWeight) {
-        goalWeight = v;
-        break;
-      }
-    }
-
-    if (budgets.length >= 1) {
-      baseBudget = budgets[0]!.value;
-    }
-
-    break;
-  }
-
-  entries.sort((a, b) => b.dayNumber - a.dayNumber);
-
-  return { currentWeight, goalWeight, baseBudget, entries };
-}
-
-// ---------------------------------------------------------------------------
 // getGoalsStatus -> Goals
 // ---------------------------------------------------------------------------
 
@@ -568,11 +437,15 @@ function round(value: number | null, digits: number): number | null {
  * to shared key objects resolve automatically via the reader's object table.
  * Returns null if the graph fails to deserialize cleanly (caller falls back).
  */
-function extractFoodLogStructural(
+/**
+ * Fully deserialize a GWT-RPC response into its object graph, or return null
+ * if the layout desyncs (callers fall back to heuristics). Shared by the
+ * single-day food log and the bulk date-range extractors.
+ */
+function readObjectGraph(
   raw: GwtResponse,
-  targetDayNumber: number,
   registry?: Map<string, StructFieldDef[]> | null,
-): FoodLogItem[] | null {
+): StructReader | null {
   // The auto-derived registry labels enums as single-int types, so route them
   // through the type path (empty enum set). The built-in registry relies on the
   // reader's enum handling and the curated GWT_ENUMS set.
@@ -592,8 +465,20 @@ function extractFoodLogStructural(
   }
   // A clean read consumes every token; anything left means the layout desynced.
   if (reader.remaining !== 0) return null;
+  return reader;
+}
 
-  const items: FoodLogItem[] = [];
+/**
+ * Collect every FoodLogEntry in a deserialized graph, grouped by the day it was
+ * logged on. A range response contains many days; a single-day response one.
+ * Returns null when entries were found but no nutrient resolved, which means
+ * the nutrient-key mapping broke and the caller should fall back.
+ */
+function foodItemsByDay(
+  reader: StructReader,
+): Map<number, FoodLogItem[]> | null {
+  const byDay = new Map<number, FoodLogItem[]>();
+  let anyItem = false;
   let anyNutrient = false;
 
   for (const obj of reader.allObjects()) {
@@ -614,7 +499,7 @@ function extractFoodLogStructural(
     const day = dayDate && typeof dayDate.dayNumber === "number"
       ? dayDate.dayNumber
       : null;
-    if (day !== targetDayNumber) continue;
+    if (day === null) continue;
 
     const serving = asRecord(entry.serving);
     const foodNutrients = serving && asRecord(serving.nutrients);
@@ -639,13 +524,28 @@ function extractFoodLogStructural(
       }
     }
 
-    items.push({ name, brand, quantity: round(quantity, 4), nutrition });
+    let dayItems = byDay.get(day);
+    if (!dayItems) byDay.set(day, (dayItems = []));
+    dayItems.push({ name, brand, quantity: round(quantity, 4), nutrition });
+    anyItem = true;
   }
 
   // If we found entries but not a single nutrient resolved, the nutrient-key
   // mapping is broken — treat as a failed structural read.
-  if (items.length > 0 && !anyNutrient) return null;
-  return items;
+  if (anyItem && !anyNutrient) return null;
+  return byDay;
+}
+
+function extractFoodLogStructural(
+  raw: GwtResponse,
+  targetDayNumber: number,
+  registry?: Map<string, StructFieldDef[]> | null,
+): FoodLogItem[] | null {
+  const reader = readObjectGraph(raw, registry);
+  if (!reader) return null;
+  const byDay = foodItemsByDay(reader);
+  if (!byDay) return null;
+  return byDay.get(targetDayNumber) ?? [];
 }
 
 function extractFoodLogHeuristic(
@@ -784,4 +684,152 @@ export function extractFoodLog(
     totalCalories,
     detailed,
   };
+}
+
+// ---------------------------------------------------------------------------
+// getDailyDetailsIncludingPendingForDateRange -> bulk per-day records
+// ---------------------------------------------------------------------------
+
+/** Per-day totals for every nutrient the food log tracks. */
+export type NutritionTotals = Record<keyof FoodNutrition, number>;
+
+export interface DailyRecord {
+  date: string;
+  dayNumber: number;
+  /** Base calorie budget for the day (excludes exercise). */
+  caloriesBudget: number;
+  caloriesEaten: number;
+  exerciseCalories: number;
+  /** budget + exercise - eaten. Negative means over budget. */
+  caloriesRemaining: number;
+  /** Weight recorded on this day, or null if none was recorded. */
+  weight: number | null;
+  /** Number of foods logged on this day. */
+  foodEntryCount: number;
+  /** True when at least one food was logged. */
+  logged: boolean;
+  /** Summed nutrition across everything logged that day. */
+  nutrition: NutritionTotals;
+  /** Individual foods, only populated when the caller asks for them. */
+  entries?: FoodLogItem[];
+}
+
+export interface DailyRangeResult {
+  days: DailyRecord[];
+  /**
+   * True when the object graph deserialized cleanly, so weight and per-day
+   * nutrition are present. False means only the calorie figures (budget,
+   * eaten, exercise) could be recovered from the positional fallback.
+   */
+  detailed: boolean;
+}
+
+const NUTRIENT_KEYS = Object.keys(EMPTY_NUTRITION) as Array<keyof FoodNutrition>;
+
+function emptyTotals(): NutritionTotals {
+  return Object.fromEntries(NUTRIENT_KEYS.map((k) => [k, 0])) as NutritionTotals;
+}
+
+function sumNutrition(items: FoodLogItem[]): NutritionTotals {
+  const totals = emptyTotals();
+  for (const item of items) {
+    for (const key of NUTRIENT_KEYS) {
+      const value = item.nutrition[key];
+      if (value !== null) totals[key] += value;
+    }
+  }
+  for (const key of NUTRIENT_KEYS) {
+    totals[key] = round(totals[key], 1)!;
+  }
+  return totals;
+}
+
+/**
+ * Extract one record per day from a `getDailyDetailsIncludingPendingForDateRange`
+ * response, which carries a `DailyDetails` object per day in the range.
+ *
+ * Prefers a full structural deserialization, which yields the day's recorded
+ * weight and summed nutrition alongside the calorie figures. If the object
+ * graph fails to parse cleanly (e.g. Lose It changed its model), falls back to
+ * the positional `DailyLogGoalsState` scan used by the single-day summary,
+ * which still recovers budget/eaten/exercise for every day but no weight or
+ * nutrition; `detailed` is false in that case.
+ */
+export function extractDailyRange(
+  raw: GwtResponse,
+  registry?: Map<string, StructFieldDef[]> | null,
+): DailyRangeResult {
+  const reader = readObjectGraph(raw, registry);
+  const byDay = reader ? foodItemsByDay(reader) : null;
+  const structural = reader && byDay ? readDailyDetails(reader, byDay) : null;
+
+  if (structural && structural.length > 0) {
+    return { days: structural, detailed: true };
+  }
+
+  // Fallback: the positional scan finds every day's calorie figures.
+  const summary = extractDailySummary(raw, -1);
+  const days = (summary?.weekEntries ?? []).map<DailyRecord>((e) => ({
+    date: e.date,
+    dayNumber: e.dayNumber,
+    caloriesBudget: e.caloriesBudget,
+    caloriesEaten: e.caloriesEaten,
+    exerciseCalories: e.exerciseCalories,
+    caloriesRemaining: e.caloriesRemaining,
+    weight: null,
+    foodEntryCount: 0,
+    logged: e.caloriesEaten > 0,
+    nutrition: emptyTotals(),
+  }));
+
+  return { days, detailed: false };
+}
+
+function readDailyDetails(
+  reader: StructReader,
+  foodByDay: Map<number, FoodLogItem[]>,
+): DailyRecord[] | null {
+  const byDay = new Map<number, DailyRecord>();
+
+  for (const obj of reader.allObjects()) {
+    const details = asRecord(obj);
+    if (!details || details._cls !== "DailyDetails") continue;
+
+    const logEntry = asRecord(details.dailyLogEntry);
+    const dayDate = logEntry && asRecord(logEntry.dayDate);
+    const dayNumber = dayDate && typeof dayDate.dayNumber === "number"
+      ? dayDate.dayNumber
+      : null;
+    if (dayNumber === null || byDay.has(dayNumber)) continue;
+
+    const goalsState = asRecord(logEntry?.goalsState);
+    const budget = doubleValue(goalsState?.budget);
+    const eaten = doubleValue(logEntry?.caloriesEaten);
+    const exercise = doubleValue(logEntry?.exerciseCalories);
+    if (budget === null || eaten === null || exercise === null) return null;
+
+    // The recorded weight hangs off the day, so it is correctly attributed even
+    // on days with no weigh-in (where it is simply absent).
+    const recorded = asRecord(details.recordedWeight);
+    const weight = doubleValue(recorded?.weight);
+
+    const items = foodByDay.get(dayNumber) ?? [];
+
+    byDay.set(dayNumber, {
+      date: dayNumberToDateString(dayNumber),
+      dayNumber,
+      caloriesBudget: Math.round(budget),
+      caloriesEaten: Math.round(eaten),
+      exerciseCalories: Math.round(exercise),
+      caloriesRemaining: Math.round(budget + exercise - eaten),
+      weight: weight === null ? null : round(weight, 2),
+      foodEntryCount: items.length,
+      logged: items.length > 0,
+      nutrition: sumNutrition(items),
+      entries: items,
+    });
+  }
+
+  if (byDay.size === 0) return null;
+  return [...byDay.values()].sort((a, b) => a.dayNumber - b.dayNumber);
 }
