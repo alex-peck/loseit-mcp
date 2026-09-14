@@ -32,8 +32,22 @@ describe("LoseItOAuthProvider", () => {
         createdAt: 1,
         updatedAt: 1,
       };
+      let authenticateCalls = 0;
+      let markAuthenticationStarted!: () => void;
+      let finishAuthentication!: () => void;
+      const authenticationStarted = new Promise<void>((resolve) => {
+        markAuthenticationStarted = resolve;
+      });
+      const authenticationReady = new Promise<void>((resolve) => {
+        finishAuthentication = resolve;
+      });
       const userClients = {
-        authenticate: async () => user,
+        authenticate: async () => {
+          authenticateCalls += 1;
+          markAuthenticationStarted();
+          await authenticationReady;
+          return user;
+        },
       } as unknown as UserClientManager;
       const provider = new LoseItOAuthProvider(config, store, userClients);
       const client: OAuthClientInformationFull = {
@@ -76,12 +90,26 @@ describe("LoseItOAuthProvider", () => {
       const loginId = signInPage.match(/name="login_id" value="([^"]+)"/)?.[1];
       assert.ok(loginId);
 
-      const redirect = await provider.completeLogin(
+      const firstLogin = provider.completeLogin(
         loginId,
         user.email,
         user.password,
         user.timezone,
       );
+      const duplicateLogin = provider.completeLogin(
+        loginId,
+        user.email,
+        user.password,
+        user.timezone,
+      );
+      await authenticationStarted;
+      assert.equal(authenticateCalls, 1);
+      finishAuthentication();
+      const [redirect, duplicateRedirect] = await Promise.all([
+        firstLogin,
+        duplicateLogin,
+      ]);
+      assert.equal(duplicateRedirect.href, redirect.href);
       const code = redirect.searchParams.get("code");
       assert.ok(code);
       assert.equal(

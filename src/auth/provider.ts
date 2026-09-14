@@ -43,6 +43,11 @@ interface AuthorizationCode {
   expiresAt: number;
 }
 
+interface LoginAttempt {
+  result: Promise<URL>;
+  expiresAt: number;
+}
+
 function escapeHtml(value: string): string {
   return value
     .replaceAll("&", "&amp;")
@@ -101,6 +106,7 @@ export class PersistentClientsStore implements OAuthRegisteredClientsStore {
 export class LoseItOAuthProvider implements OAuthServerProvider {
   readonly clientsStore: PersistentClientsStore;
   private readonly pendingLogins = new Map<string, PendingLogin>();
+  private readonly loginAttempts = new Map<string, LoginAttempt>();
   private readonly authorizationCodes = new Map<string, AuthorizationCode>();
   private readonly resourceUrl: URL;
 
@@ -145,6 +151,11 @@ export class LoseItOAuthProvider implements OAuthServerProvider {
     timezone: string,
   ): Promise<URL> {
     this.pruneTransientData();
+    const existingAttempt = this.loginAttempts.get(loginId);
+    if (existingAttempt) {
+      return existingAttempt.result;
+    }
+
     const pending = this.pendingLogins.get(loginId);
     if (!pending) {
       throw new InvalidGrantError(
@@ -152,21 +163,38 @@ export class LoseItOAuthProvider implements OAuthServerProvider {
       );
     }
 
+    const result = this.finishLogin(
+      loginId,
+      pending,
+      email,
+      password,
+      timezone,
+    );
+    this.loginAttempts.set(loginId, {
+      result,
+      expiresAt: Date.now() + CODE_TTL_MS,
+    });
+    try {
+      return await result;
+    } catch (error) {
+      this.loginAttempts.delete(loginId);
+      throw error;
+    }
+  }
+
+  private async finishLogin(
+    loginId: string,
+    pending: PendingLogin,
+    email: string,
+    password: string,
+    timezone: string,
+  ): Promise<URL> {
     const client = await this.clientsStore.getClient(pending.clientId);
     if (!client) {
       throw new InvalidGrantError("OAuth client is no longer registered");
     }
 
-    this.pendingLogins.delete(loginId);
-    let user;
-    try {
-      user = await this.userClients.authenticate(email, password, timezone);
-    } catch (error) {
-      if (pending.expiresAt > Date.now()) {
-        this.pendingLogins.set(loginId, pending);
-      }
-      throw error;
-    }
+    const user = await this.userClients.authenticate(email, password, timezone);
     const code = randomToken();
     this.authorizationCodes.set(code, {
       clientId: pending.clientId,
@@ -174,6 +202,7 @@ export class LoseItOAuthProvider implements OAuthServerProvider {
       params: pending.params,
       expiresAt: Date.now() + CODE_TTL_MS,
     });
+    this.pendingLogins.delete(loginId);
     const redirect = new URL(pending.params.redirectUri);
     redirect.searchParams.set("code", code);
     if (pending.params.state !== undefined) {
@@ -379,6 +408,11 @@ export class LoseItOAuthProvider implements OAuthServerProvider {
     for (const [id, pending] of this.pendingLogins) {
       if (pending.expiresAt <= now) {
         this.pendingLogins.delete(id);
+      }
+    }
+    for (const [id, attempt] of this.loginAttempts) {
+      if (attempt.expiresAt <= now) {
+        this.loginAttempts.delete(id);
       }
     }
     for (const [code, authorization] of this.authorizationCodes) {
