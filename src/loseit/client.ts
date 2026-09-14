@@ -80,11 +80,12 @@ export class LoseItClient {
   private policyHash: string | null = null;
   private permutation: string | null = null;
   private gwtRegistry: Map<string, StructFieldDef[]> | null = null;
+  private buildInfoPromise: Promise<void> | null = null;
 
   constructor(private readonly config: LoseItConfig) {}
 
   async initialize(): Promise<void> {
-    await this.resolveGwtBuildInfo();
+    await this.prepare();
 
     const cached = await this.loadSession();
     if (cached) {
@@ -105,6 +106,11 @@ export class LoseItClient {
     }
 
     await this.login();
+  }
+
+  async prepare(): Promise<void> {
+    this.buildInfoPromise ??= this.resolveGwtBuildInfo();
+    await this.buildInfoPromise;
   }
 
   /**
@@ -244,6 +250,8 @@ export class LoseItClient {
     retried = false,
     timeoutMs = this.config.requestTimeoutMs,
   ): Promise<{ raw: GwtResponse; reader: GwtReader }> {
+    await this.prepare();
+
     if (!this.userId || !this.username) {
       throw new Error("Not authenticated — call initialize() first");
     }

@@ -118,6 +118,7 @@ export async function startHttpServer(
       legacyHeaders: false,
     }),
     async (req, res) => {
+      const startedAt = Date.now();
       const parsed = loginSchema.safeParse(req.body);
       if (!parsed.success) {
         const loginId =
@@ -137,6 +138,10 @@ export async function startHttpServer(
           parsed.data.password,
           parsed.data.timezone,
         );
+        console.error("OAuth login endpoint redirecting", {
+          redirectHost: redirect.hostname,
+          durationMs: Date.now() - startedAt,
+        });
         res.redirect(302, redirect.href);
       } catch (error) {
         const publicMessage =

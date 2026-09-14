@@ -27,7 +27,7 @@ export class UserClientManager {
         password,
       ),
     );
-    await client.initialize();
+    await client.login();
 
     const now = Date.now();
     const user = await this.store.update((state) => {
@@ -45,6 +45,9 @@ export class UserClientManager {
     });
 
     this.clients.set(userId, Promise.resolve(client));
+    void client.prepare().catch((error: unknown) => {
+      console.error("Lose It background preparation failed:", error);
+    });
     return user;
   }
 
