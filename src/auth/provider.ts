@@ -130,6 +130,13 @@ export class LoseItOAuthProvider implements OAuthServerProvider {
     this.pruneTransientData();
     this.validateScopes(params.scopes);
     this.validateResource(params.resource);
+    console.error("OAuth authorization started", {
+      clientId: client.client_id,
+      redirectUri: params.redirectUri,
+      scopes: params.scopes ?? [],
+      resource: params.resource?.href,
+      hasState: params.state !== undefined,
+    });
 
     const loginId = randomToken();
     this.pendingLogins.set(loginId, {
@@ -203,6 +210,11 @@ export class LoseItOAuthProvider implements OAuthServerProvider {
       expiresAt: Date.now() + CODE_TTL_MS,
     });
     this.pendingLogins.delete(loginId);
+    console.error("OAuth login completed", {
+      clientId: pending.clientId,
+      redirectUri: pending.params.redirectUri,
+      hasState: pending.params.state !== undefined,
+    });
     const redirect = new URL(pending.params.redirectUri);
     redirect.searchParams.set("code", code);
     if (pending.params.state !== undefined) {
@@ -229,6 +241,9 @@ export class LoseItOAuthProvider implements OAuthServerProvider {
     authorizationCode: string,
   ): Promise<string> {
     const code = this.getAuthorizationCode(client, authorizationCode);
+    console.error("OAuth authorization code challenge requested", {
+      clientId: client.client_id,
+    });
     return code.params.codeChallenge;
   }
 
@@ -239,17 +254,26 @@ export class LoseItOAuthProvider implements OAuthServerProvider {
     redirectUri?: string,
     resource?: URL,
   ): Promise<OAuthTokens> {
+    console.error("OAuth authorization code exchange requested", {
+      clientId: client.client_id,
+      redirectUri,
+      resource: resource?.href,
+    });
     const code = this.getAuthorizationCode(client, authorizationCode);
     if (redirectUri && redirectUri !== code.params.redirectUri) {
       throw new InvalidGrantError("redirect_uri does not match");
     }
     this.validateResource(resource ?? code.params.resource);
     this.authorizationCodes.delete(authorizationCode);
-    return this.issueTokenPair(
+    const tokens = await this.issueTokenPair(
       code.userId,
       code.clientId,
       this.normalizedScopes(code.params.scopes),
     );
+    console.error("OAuth authorization code exchange completed", {
+      clientId: client.client_id,
+    });
+    return tokens;
   }
 
   async exchangeRefreshToken(

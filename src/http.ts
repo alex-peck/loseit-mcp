@@ -157,6 +157,33 @@ export async function startHttpServer(
     },
   );
 
+  app.use("/token", (req, res, next) => {
+    const body =
+      typeof req.body === "object" && req.body !== null
+        ? (req.body as Record<string, unknown>)
+        : {};
+    const startedAt = Date.now();
+    console.error("OAuth token endpoint request", {
+      grantType: body["grant_type"],
+      hasClientId:
+        typeof body["client_id"] === "string" && body["client_id"].length > 0,
+      hasCode: typeof body["code"] === "string" && body["code"].length > 0,
+      hasCodeVerifier:
+        typeof body["code_verifier"] === "string" &&
+        body["code_verifier"].length > 0,
+      redirectUri: body["redirect_uri"],
+      resource: body["resource"],
+      scope: body["scope"],
+    });
+    res.on("finish", () => {
+      console.error("OAuth token endpoint response", {
+        status: res.statusCode,
+        durationMs: Date.now() - startedAt,
+      });
+    });
+    next();
+  });
+
   app.use(
     mcpAuthRouter({
       provider: authProvider,
