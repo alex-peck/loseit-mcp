@@ -143,6 +143,8 @@ Optional:
 - `MCP_DATA_PATH` (default `~/.loseit-mcp/server.enc.json`)
 - `MCP_ALLOWED_HOSTS` (comma-separated; defaults to the hostname in
   `MCP_PUBLIC_URL`)
+- `MCP_ALLOWED_REDIRECT_HOSTS` (comma-separated OAuth client redirect
+  hostnames; defaults to ChatGPT/OpenAI plus localhost)
 - `MCP_TRUST_PROXY` (default `false`; set `true` behind one trusted reverse
   proxy so rate limiting sees the client address)
 

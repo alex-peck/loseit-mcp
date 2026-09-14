@@ -3,6 +3,7 @@ import { randomBytes } from "node:crypto";
 import type { Response } from "express";
 import {
   InvalidGrantError,
+  InvalidClientMetadataError,
   InvalidScopeError,
   InvalidTokenError,
   InvalidRequestError,
@@ -56,7 +57,10 @@ function randomToken(): string {
 }
 
 export class PersistentClientsStore implements OAuthRegisteredClientsStore {
-  constructor(private readonly store: EncryptedStore) {}
+  constructor(
+    private readonly store: EncryptedStore,
+    private readonly allowedRedirectHosts: ReadonlySet<string>,
+  ) {}
 
   async getClient(
     clientId: string,
@@ -73,6 +77,19 @@ export class PersistentClientsStore implements OAuthRegisteredClientsStore {
     const registered = client as OAuthClientInformationFull;
     if (!registered.client_id) {
       throw new InvalidRequestError("OAuth client ID was not generated");
+    }
+    for (const redirectUri of registered.redirect_uris) {
+      const redirect = new URL(redirectUri);
+      const hostname = redirect.hostname.toLowerCase();
+      const isLoopback = hostname === "localhost" || hostname === "127.0.0.1";
+      if (
+        !this.allowedRedirectHosts.has(hostname) ||
+        (redirect.protocol !== "https:" && !isLoopback)
+      ) {
+        throw new InvalidClientMetadataError(
+          `Redirect host is not allowed: ${hostname}`,
+        );
+      }
     }
     await this.store.update((state) => {
       state.clients[registered.client_id] = registered;
@@ -92,7 +109,10 @@ export class LoseItOAuthProvider implements OAuthServerProvider {
     private readonly store: EncryptedStore,
     private readonly userClients: UserClientManager,
   ) {
-    this.clientsStore = new PersistentClientsStore(store);
+    this.clientsStore = new PersistentClientsStore(
+      store,
+      new Set(config.allowedRedirectHosts),
+    );
     this.resourceUrl = new URL("/mcp", config.publicUrl);
   }
 

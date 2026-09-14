@@ -51,6 +51,10 @@ const httpEnvSchema = commonEnvSchema.extend({
     .min(1)
     .default("~/.loseit-mcp/server.enc.json"),
   MCP_ALLOWED_HOSTS: z.string().trim().optional(),
+  MCP_ALLOWED_REDIRECT_HOSTS: z
+    .string()
+    .trim()
+    .default("chatgpt.com,chat.openai.com,localhost,127.0.0.1"),
 });
 
 export interface LoseItConfig {
@@ -81,6 +85,7 @@ export interface HttpServerConfig {
   dataPath: string;
   encryptionSecret: string;
   allowedHosts: string[];
+  allowedRedirectHosts: string[];
   trustProxy: boolean;
   loseIt: Omit<LoseItConfig, "email" | "password" | "sessionPath">;
 }
@@ -167,6 +172,9 @@ export function loadHttpConfig(
       configuredHosts && configuredHosts.length > 0
         ? configuredHosts
         : [publicUrl.hostname],
+    allowedRedirectHosts: parsed.data.MCP_ALLOWED_REDIRECT_HOSTS.split(",")
+      .map((host) => host.trim().toLowerCase())
+      .filter(Boolean),
     loseIt: commonConfig(parsed.data),
   };
 }

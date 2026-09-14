@@ -27,6 +27,12 @@ describe("configuration modes", () => {
     assert.equal(config.publicUrl.href, "https://loseit.example.com/");
     assert.equal(config.dataPath, "/tmp/test-home/.loseit-mcp/server.enc.json");
     assert.deepEqual(config.allowedHosts, ["loseit.example.com"]);
+    assert.deepEqual(config.allowedRedirectHosts, [
+      "chatgpt.com",
+      "chat.openai.com",
+      "localhost",
+      "127.0.0.1",
+    ]);
     assert.equal(config.trustProxy, true);
   });
 
