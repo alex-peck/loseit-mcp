@@ -49,6 +49,21 @@ it keeps working across Lose It deploys with no manual intervention. Auto-discov
 can be disabled with `LOSEIT_GWT_AUTOFETCH=false`, and either value can be pinned
 explicitly via the environment variables below (an explicit override always wins).
 
+## Run Modes
+
+The same build supports two deployment styles:
+
+| Mode | Transport | Accounts | Credentials |
+| --- | --- | --- | --- |
+| `stdio` (default) | local stdio | one | `LOSEIT_EMAIL` and `LOSEIT_PASSWORD` in the process environment |
+| `http` | Streamable HTTP + OAuth | many | each user signs in through the server's web page |
+
+HTTP mode implements OAuth authorization-code flow with PKCE, dynamic client
+registration, access/refresh tokens, and the MCP protected-resource metadata
+used by remote clients. Each MCP session is bound to the authenticated Lose It
+account. OAuth clients, tokens, and Lose It credentials are persisted in one
+AES-256-GCM encrypted file; raw OAuth tokens are stored only as hashes.
+
 ## Setup
 
 ```bash
@@ -58,23 +73,28 @@ npm test
 npm run build
 ```
 
-Configuration requires:
+Shared optional values:
 
-- `LOSEIT_EMAIL`
-- `LOSEIT_PASSWORD`
-
-Optional values:
-
-- `LOSEIT_TIMEZONE` (IANA zone, default `America/Chicago`)
-- `LOSEIT_SESSION_PATH` (default `~/.loseit-mcp/session.json`)
+- `MCP_TRANSPORT` (`stdio` by default; set `http` for multi-user hosting)
+- `LOSEIT_TIMEZONE` (IANA zone shown by default on the hosted sign-in page;
+  default `America/Chicago`)
 - `LOSEIT_REQUEST_TIMEOUT_MS` (default `15000`)
 - `LOSEIT_GWT_AUTOFETCH` (default `true`; set `false` to disable runtime discovery of the build values below)
 - `LOSEIT_GWT_POLICY_HASH` (pin the policy hash instead of auto-discovering it)
 - `LOSEIT_GWT_PERMUTATION` (pin the permutation strong name instead of auto-discovering it)
 
-## MCP Setup
+### Single-user stdio mode
 
-The server runs over stdio.
+Required:
+
+- `LOSEIT_EMAIL`
+- `LOSEIT_PASSWORD`
+
+Optional:
+
+- `LOSEIT_SESSION_PATH` (default `~/.loseit-mcp/session.json`)
+
+The server runs over stdio:
 
 Example client configuration for the built server:
 
@@ -106,9 +126,56 @@ For local development without building first:
 
 If a client does not support `cwd`, pass the Lose It environment variables directly in the client configuration instead of relying on `.env`.
 
+### Multi-user HTTP mode
+
+Required:
+
+- `MCP_TRANSPORT=http`
+- `MCP_PUBLIC_URL` — the externally reachable HTTPS origin, without a path
+  (for example `https://loseit-mcp.example.com`)
+- `MCP_ENCRYPTION_SECRET` — at least 32 random characters; keep this stable or
+  the encrypted user/token store cannot be opened
+
+Optional:
+
+- `MCP_HTTP_HOST` (default `0.0.0.0`)
+- `MCP_HTTP_PORT` (default `3000`)
+- `MCP_DATA_PATH` (default `~/.loseit-mcp/server.enc.json`)
+- `MCP_ALLOWED_HOSTS` (comma-separated; defaults to the hostname in
+  `MCP_PUBLIC_URL`)
+- `MCP_TRUST_PROXY` (default `false`; set `true` behind one trusted reverse
+  proxy so rate limiting sees the client address)
+
+Generate an encryption secret and start the server:
+
+```bash
+export MCP_TRANSPORT=http
+export MCP_PUBLIC_URL=https://loseit-mcp.example.com
+export MCP_ENCRYPTION_SECRET="$(openssl rand -base64 48)"
+npm run build
+npm start
+```
+
+Terminate TLS at the application or at a trusted reverse proxy and forward the
+public origin to `MCP_HTTP_PORT`. Persist `MCP_DATA_PATH` across deploys and
+back it up together with the encryption secret.
+
+The remote MCP URL is:
+
+```text
+https://loseit-mcp.example.com/mcp
+```
+
+Add that URL as the MCP server in ChatGPT. The OAuth browser flow displays this
+server's sign-in page; each person enters their own Lose It email, password, and
+timezone. The health endpoint is `GET /healthz`.
+
 ## Notes
 
 - Session cookies are cached to `~/.loseit-mcp/session.json` to avoid re-authenticating on every server start. The cache is created with restricted file permissions.
+- In HTTP mode, Lose It session cookies remain in memory. Encrypted credentials
+  allow the server to re-authenticate an account after a restart or expired
+  Lose It session without writing a plaintext per-user cookie cache.
 - Bulk range tools are backed by Lose It's own
   `getDailyDetailsIncludingPendingForDateRange` RPC, which the web app uses to
   render its multi-day views. One request returns the whole range, so pulling

@@ -474,6 +474,10 @@ export class LoseItClient {
   }
 
   private async loadSession(): Promise<SessionCache | null> {
+    if (this.config.sessionPath === null) {
+      return null;
+    }
+
     try {
       const data = await readFile(this.config.sessionPath, "utf-8");
       return JSON.parse(data) as SessionCache;
@@ -483,6 +487,10 @@ export class LoseItClient {
   }
 
   private async saveSession(): Promise<void> {
+    if (this.config.sessionPath === null) {
+      return;
+    }
+
     const cache: SessionCache = {
       cookies: Object.fromEntries(this.cookies),
       userId: this.userId!,
