@@ -2,7 +2,10 @@ import { createHmac } from "node:crypto";
 
 import type { HttpServerConfig } from "../config.js";
 import { createUserConfig } from "../config.js";
-import { LoseItClient } from "../loseit/client.js";
+import {
+  LoseItClient,
+  type LoseItSession,
+} from "../loseit/client.js";
 import type { EncryptedStore, StoredUser } from "./store.js";
 
 export class UserClientManager {
@@ -20,13 +23,27 @@ export class UserClientManager {
   ): Promise<StoredUser> {
     const normalizedEmail = email.trim().toLowerCase();
     const userId = this.userIdForEmail(normalizedEmail);
-    const client = new LoseItClient(
-      createUserConfig(
-        { ...this.config.loseIt, timezone },
-        normalizedEmail,
-        password,
-      ),
+    const existing = await this.store.read((state) => state.users[userId]);
+    const client = this.createClient(
+      userId,
+      normalizedEmail,
+      password,
+      timezone,
     );
+
+    if (existing?.password === password && existing.session) {
+      client.restoreSession(existing.session);
+      const user = await this.store.update((state) => {
+        const stored = state.users[userId]!;
+        stored.timezone = timezone;
+        stored.updatedAt = Date.now();
+        return stored;
+      });
+      this.clients.set(userId, Promise.resolve(client));
+      this.startPreparation(client);
+      return user;
+    }
+
     await client.login();
 
     const now = Date.now();
@@ -37,6 +54,7 @@ export class UserClientManager {
         email: normalizedEmail,
         password,
         timezone,
+        session: client.exportSession(),
         createdAt: existing?.createdAt ?? now,
         updatedAt: now,
       };
@@ -45,9 +63,7 @@ export class UserClientManager {
     });
 
     this.clients.set(userId, Promise.resolve(client));
-    void client.prepare().catch((error: unknown) => {
-      console.error("Lose It background preparation failed:", error);
-    });
+    this.startPreparation(client);
     return user;
   }
 
@@ -73,15 +89,49 @@ export class UserClientManager {
       throw new Error("Authenticated Lose It account no longer exists");
     }
 
-    const client = new LoseItClient(
-      createUserConfig(
-        { ...this.config.loseIt, timezone: user.timezone },
-        user.email,
-        user.password,
-      ),
+    const client = this.createClient(
+      user.id,
+      user.email,
+      user.password,
+      user.timezone,
     );
-    await client.initialize();
+    if (user.session) {
+      client.restoreSession(user.session);
+      this.startPreparation(client);
+    } else {
+      await client.initialize();
+    }
     return client;
+  }
+
+  private createClient(
+    userId: string,
+    email: string,
+    password: string,
+    timezone: string,
+  ): LoseItClient {
+    return new LoseItClient(
+      createUserConfig(
+        { ...this.config.loseIt, timezone },
+        email,
+        password,
+      ),
+      async (session: LoseItSession) => {
+        await this.store.update((state) => {
+          const user = state.users[userId];
+          if (user) {
+            user.session = session;
+            user.updatedAt = Date.now();
+          }
+        });
+      },
+    );
+  }
+
+  private startPreparation(client: LoseItClient): void {
+    void client.prepare().catch((error: unknown) => {
+      console.error("Lose It background preparation failed:", error);
+    });
   }
 
   private userIdForEmail(email: string): string {

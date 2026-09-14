@@ -148,6 +148,8 @@ export async function startHttpServer(
           error instanceof LoseItApiError &&
           (error.status === 400 || error.status === 401)
             ? "Lose It rejected those credentials. Check your email and password."
+            : error instanceof LoseItApiError && error.status === 429
+              ? "Lose It is temporarily rate-limiting sign-ins. Wait a few minutes, then try again."
             : error instanceof Error &&
                 error.message.startsWith("This sign-in request has expired")
               ? error.message

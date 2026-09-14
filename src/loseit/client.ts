@@ -38,7 +38,7 @@ export class LoseItNetworkError extends Error {
   }
 }
 
-interface SessionCache {
+export interface LoseItSession {
   cookies: Record<string, string>;
   userId: number;
   username: string;
@@ -82,7 +82,12 @@ export class LoseItClient {
   private gwtRegistry: Map<string, StructFieldDef[]> | null = null;
   private buildInfoPromise: Promise<void> | null = null;
 
-  constructor(private readonly config: LoseItConfig) {}
+  constructor(
+    private readonly config: LoseItConfig,
+    private readonly onSessionUpdated?: (
+      session: LoseItSession,
+    ) => Promise<void>,
+  ) {}
 
   async initialize(): Promise<void> {
     await this.prepare();
@@ -111,6 +116,24 @@ export class LoseItClient {
   async prepare(): Promise<void> {
     this.buildInfoPromise ??= this.resolveGwtBuildInfo();
     await this.buildInfoPromise;
+  }
+
+  restoreSession(session: LoseItSession): void {
+    this.cookies = new Map(Object.entries(session.cookies));
+    this.userId = session.userId;
+    this.username = session.username;
+  }
+
+  exportSession(): LoseItSession {
+    if (this.userId === null || this.username === null) {
+      throw new Error("Cannot export a session before authentication");
+    }
+    return {
+      cookies: Object.fromEntries(this.cookies),
+      userId: this.userId,
+      username: this.username,
+      timestamp: Date.now(),
+    };
   }
 
   /**
@@ -481,35 +504,29 @@ export class LoseItClient {
     return parts.join("|") + "|";
   }
 
-  private async loadSession(): Promise<SessionCache | null> {
+  private async loadSession(): Promise<LoseItSession | null> {
     if (this.config.sessionPath === null) {
       return null;
     }
 
     try {
       const data = await readFile(this.config.sessionPath, "utf-8");
-      return JSON.parse(data) as SessionCache;
+      return JSON.parse(data) as LoseItSession;
     } catch {
       return null;
     }
   }
 
   private async saveSession(): Promise<void> {
-    if (this.config.sessionPath === null) {
-      return;
+    const cache = this.exportSession();
+
+    if (this.config.sessionPath !== null) {
+      const dir = dirname(this.config.sessionPath);
+      await mkdir(dir, { recursive: true, mode: 0o700 });
+      await writeFile(this.config.sessionPath, JSON.stringify(cache), {
+        mode: 0o600,
+      });
     }
-
-    const cache: SessionCache = {
-      cookies: Object.fromEntries(this.cookies),
-      userId: this.userId!,
-      username: this.username!,
-      timestamp: Date.now(),
-    };
-
-    const dir = dirname(this.config.sessionPath);
-    await mkdir(dir, { recursive: true, mode: 0o700 });
-    await writeFile(this.config.sessionPath, JSON.stringify(cache), {
-      mode: 0o600,
-    });
+    await this.onSessionUpdated?.(cache);
   }
 }

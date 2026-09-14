@@ -9,6 +9,8 @@ import { dirname } from "node:path";
 
 import type { OAuthClientInformationFull } from "@modelcontextprotocol/sdk/shared/auth.js";
 
+import type { LoseItSession } from "../loseit/client.js";
+
 const FILE_VERSION = 1;
 const AAD = Buffer.from("loseit-mcp-encrypted-store-v1", "utf8");
 
@@ -24,6 +26,7 @@ export interface StoredUser {
   email: string;
   password: string;
   timezone: string;
+  session?: LoseItSession;
   createdAt: number;
   updatedAt: number;
 }
