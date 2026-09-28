@@ -33,8 +33,10 @@ export class UserClientManager {
 
     if (existing?.password === password && existing.session) {
       client.restoreSession(existing.session);
+      await client.gwtRpc("getGoalsData", []);
       const user = await this.store.update((state) => {
         const stored = state.users[userId]!;
+        stored.session = client.exportSession();
         stored.timezone = timezone;
         stored.updatedAt = Date.now();
         return stored;

@@ -9,6 +9,7 @@ import { writeGwtObject } from "./gwtWriter.js";
 import type { StructFieldDef } from "./structReader.js";
 import {
   parseGwtResponse,
+  GwtAuthenticationError,
   GwtReader,
   GwtParseError,
   getTimezoneOffset,
@@ -246,13 +247,22 @@ export class LoseItClient {
       );
     }
 
-    // Extract cookies from Set-Cookie headers
+    // Replace the expired session rather than retaining cookies the new login did not issue.
+    const cookies = new Map<string, string>();
     const setCookieHeaders = response.headers.getSetCookie();
     for (const header of setCookieHeaders) {
       const match = header.match(/^([^=]+)=([^;]*)/);
       if (match?.[1] && match[2] !== undefined) {
-        this.cookies.set(match[1], match[2]);
+        cookies.set(match[1], match[2]);
       }
+    }
+    if (cookies.size === 0) {
+      throw new LoseItApiError(
+        "Login response did not include session cookies",
+        response.status,
+        url,
+        "",
+      );
     }
 
     const data = (await response.json()) as {
@@ -271,6 +281,7 @@ export class LoseItClient {
     // Capitalize first letter, keep rest as-is
     this.username =
       emailPrefix.charAt(0).toUpperCase() + emailPrefix.slice(1);
+    this.cookies = cookies;
 
     console.error(
       `Authenticated as ${data.username} (user ${this.userId})`,
@@ -378,7 +389,21 @@ export class LoseItClient {
     }
 
     const text = await response.text();
-    const parsed = parseGwtResponse(text);
+    let parsed: GwtResponse;
+    try {
+      parsed = parseGwtResponse(text);
+    } catch (error) {
+      if (
+        retryOnFailure && !retried &&
+        error instanceof GwtAuthenticationError
+      ) {
+        await this.login();
+        return this.gwtRpcWithParams(
+          method, params, true, timeoutMs, retryOnFailure,
+        );
+      }
+      throw error;
+    }
     const reader = new GwtReader(parsed.values, parsed.stringTable);
 
     return { raw: parsed, reader };

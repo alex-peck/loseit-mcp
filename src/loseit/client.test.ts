@@ -1,8 +1,15 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
-import { LoseItClient, LoseItApiError, LoseItNetworkError, type GwtParam } from "./client.js";
+import {
+  LoseItClient,
+  LoseItApiError,
+  LoseItNetworkError,
+  type GwtParam,
+  type LoseItSession,
+} from "./client.js";
 import { loadConfig } from "../config.js";
+import { GwtAuthenticationError } from "./gwt.js";
 
 const config = loadConfig({
   LOSEIT_EMAIL: "test@example.com",
@@ -134,6 +141,107 @@ describe("gwtWriteWithParams", () => {
     try {
       await assert.rejects(client.gwtWriteWithParams("write", []), LoseItNetworkError);
       assert.equal(calls, 1);
+    } finally {
+      globalThis.fetch = previousFetch;
+    }
+  });
+
+  it("does not retry or log in after a GWT authentication exception", async () => {
+    const client = new LoseItClient(config);
+    client.restoreSession({
+      cookies: { session: "expired" },
+      userId: 21078800,
+      username: "Andrew",
+      timestamp: 0,
+    });
+    const previousFetch = globalThis.fetch;
+    let calls = 0;
+    globalThis.fetch = async () => {
+      calls++;
+      return new Response(
+        '//EX[1,["com.loseit.core.UserAuthenticationFailedException/123"],0,7]',
+      );
+    };
+    try {
+      await assert.rejects(
+        client.gwtWriteWithParams("write", []),
+        GwtAuthenticationError,
+      );
+      assert.equal(calls, 1);
+    } finally {
+      globalThis.fetch = previousFetch;
+    }
+  });
+});
+
+describe("gwtRpcWithParams", () => {
+  it("re-authenticates a rejected cached session and repeats a read once", async () => {
+    const saved: LoseItSession[] = [];
+    const client = new LoseItClient(
+      config,
+      async (session) => { saved.push(session); },
+    );
+    client.restoreSession({
+      cookies: { session: "expired", obsolete: "old" },
+      userId: 21078800,
+      username: "Andrew",
+      timestamp: 0,
+    });
+    const previousFetch = globalThis.fetch;
+    const sentCookies: string[] = [];
+    let logins = 0;
+    globalThis.fetch = async (input, init) => {
+      if (String(input).endsWith("/account/login")) {
+        logins++;
+        return new Response(JSON.stringify({
+          user_id: 21078800,
+          username: "andrew@example.com",
+        }), { headers: { "Set-Cookie": "session=fresh; Path=/" } });
+      }
+      sentCookies.push(new Headers(init?.headers).get("Cookie") ?? "");
+      return new Response(sentCookies.length === 1
+        ? '//EX[1,["com.loseit.core.UserAuthenticationFailedException/123"],0,7]'
+        : "//OK[1,[],0,7]");
+    };
+    try {
+      await client.gwtRpc("getGoalsData", []);
+      assert.deepEqual(sentCookies, ["session=expired; obsolete=old", "session=fresh"]);
+      assert.equal(logins, 1);
+      assert.equal(saved[0]?.cookies["session"], "fresh");
+      assert.equal(saved[0]?.cookies["obsolete"], undefined);
+    } finally {
+      globalThis.fetch = previousFetch;
+    }
+  });
+
+  it("does not retry indefinitely if the new session is rejected", async () => {
+    const client = new LoseItClient(config);
+    client.restoreSession({
+      cookies: { session: "expired" },
+      userId: 21078800,
+      username: "Andrew",
+      timestamp: 0,
+    });
+    const previousFetch = globalThis.fetch;
+    let logins = 0;
+    let reads = 0;
+    globalThis.fetch = async (input) => {
+      if (String(input).endsWith("/account/login")) {
+        logins++;
+        return new Response(JSON.stringify({
+          user_id: 21078800,
+          username: "andrew@example.com",
+        }), { headers: { "Set-Cookie": "session=fresh; Path=/" } });
+      }
+      reads++;
+      return new Response(
+        '//EX[1,["com.loseit.core.UserAuthenticationFailedException/123"],0,7]',
+      );
+    };
+    try {
+      await assert.rejects(client.gwtRpc("getGoalsData", []), GwtAuthenticationError);
+      assert.equal(logins, 1);
+      assert.equal(reads, 2);
     } finally {
       globalThis.fetch = previousFetch;
     }

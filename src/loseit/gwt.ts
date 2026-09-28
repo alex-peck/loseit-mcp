@@ -22,6 +22,13 @@ export class GwtParseError extends Error {
   }
 }
 
+export class GwtAuthenticationError extends GwtParseError {
+  constructor() {
+    super("Lose It rejected the session");
+    this.name = "GwtAuthenticationError";
+  }
+}
+
 /**
  * Very large GWT-RPC payloads are not emitted as a single JSON array literal.
  * The server splits them into chunks joined with JavaScript `Array.concat`:
@@ -91,6 +98,9 @@ export function parseGwtResponse(raw: string): GwtResponse {
   const trimmed = raw.trim();
 
   if (trimmed.startsWith("//EX")) {
+    if (/\bUserAuthenticationFailedException\b/.test(trimmed)) {
+      throw new GwtAuthenticationError();
+    }
     throw new GwtParseError(
       `GWT-RPC exception response: ${trimmed.slice(0, 200)}`,
     );

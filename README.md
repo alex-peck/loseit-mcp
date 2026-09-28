@@ -83,6 +83,9 @@ requested permissions but does not provide a scope picker. Local stdio mode
 does not use OAuth scopes. After adding tools, refresh the app's tool scan in
 ChatGPT developer mode; reauthorizing alone does not refresh its tool list.
 Published apps require an admin to update actions or republish the app.
+The server validates a cached Lose It session during sign-in and renews it if
+Lose It rejects a read request. Food-log writes are never automatically
+retried, even if the upstream session expires.
 
 ## API Coverage
 

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   parseGwtResponse,
+  GwtAuthenticationError,
   GwtReader,
   GwtParseError,
   registerGwtType,
@@ -25,6 +26,15 @@ describe("parseGwtResponse", () => {
     assert.throws(
       () => parseGwtResponse("//EX[some error]"),
       GwtParseError,
+    );
+  });
+
+  it("identifies a rejected session in a GWT exception response", () => {
+    assert.throws(
+      () => parseGwtResponse(
+        '//EX[1,["com.loseit.core.UserAuthenticationFailedException/123"],0,7]',
+      ),
+      GwtAuthenticationError,
     );
   });
 
