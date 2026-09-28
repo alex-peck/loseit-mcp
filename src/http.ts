@@ -19,7 +19,8 @@ import type { HttpServerConfig } from "./config.js";
 import { LoseItApiError } from "./loseit/client.js";
 import { APP_NAME } from "./meta.js";
 import { createServer } from "./server.js";
-import { LoseItOAuthProvider, MCP_SCOPE } from "./auth/provider.js";
+import { LoseItOAuthProvider } from "./auth/provider.js";
+import { MCP_SCOPE, MCP_WRITE_SCOPE } from "./auth/scopes.js";
 import { EncryptedStore } from "./auth/store.js";
 import { UserClientManager } from "./auth/userClients.js";
 
@@ -196,7 +197,7 @@ export async function startHttpServer(
       provider: authProvider,
       issuerUrl: config.publicUrl,
       resourceServerUrl: mcpUrl,
-      scopesSupported: [MCP_SCOPE],
+      scopesSupported: [MCP_SCOPE, MCP_WRITE_SCOPE],
       resourceName: "Lose It MCP",
     }),
   );
@@ -254,7 +255,7 @@ export async function startHttpServer(
 
     try {
       const client = await userClients.getClient(userId);
-      const mcpServer = createServer(client);
+      const mcpServer = createServer(client, { requireWriteScope: true });
       let transport!: StreamableHTTPServerTransport;
       transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: () => randomUUID(),

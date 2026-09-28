@@ -44,6 +44,9 @@ export interface StructFieldDef {
 
 export type StructValue = unknown;
 
+/** Original GWT class signature, retained for serializing a read-only draft back. */
+export const GWT_ARRAY_CLASS = Symbol("GWT_ARRAY_CLASS");
+
 export class StructParseError extends Error {
   constructor(message: string) {
     super(message);
@@ -208,6 +211,7 @@ export class StructReader {
     if (rawName.startsWith("[B")) {
       this.counter += 1;
       const arr: number[] = [];
+      Object.defineProperty(arr, GWT_ARRAY_CLASS, { value: rawName });
       this.objects.set(this.counter, arr);
       const n = this.readInt();
       for (let i = 0; i < n; i++) arr.push(this.readInt());
@@ -218,6 +222,7 @@ export class StructReader {
     if (rawName.startsWith("[")) {
       this.counter += 1;
       const arr: unknown[] = [];
+      Object.defineProperty(arr, GWT_ARRAY_CLASS, { value: rawName });
       this.objects.set(this.counter, arr);
       const n = this.readInt();
       for (let i = 0; i < n; i++) arr.push(this.readObject());
@@ -228,6 +233,7 @@ export class StructReader {
     if (LIST_CLASSES.has(short) || SET_CLASSES.has(short)) {
       this.counter += 1;
       const arr: unknown[] = [];
+      Object.defineProperty(arr, GWT_ARRAY_CLASS, { value: rawName });
       this.objects.set(this.counter, arr);
       const n = this.readInt();
       for (let i = 0; i < n; i++) arr.push(this.readObject());
@@ -236,6 +242,7 @@ export class StructReader {
     if (MAP_CLASSES.has(short)) {
       this.counter += 1;
       const entries: Array<[unknown, unknown]> = [];
+      Object.defineProperty(entries, GWT_ARRAY_CLASS, { value: rawName });
       this.objects.set(this.counter, entries);
       const n = this.readInt();
       for (let i = 0; i < n; i++) {

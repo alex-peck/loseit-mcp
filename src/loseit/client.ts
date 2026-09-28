@@ -4,6 +4,8 @@ import { dirname } from "node:path";
 import type { LoseItConfig } from "../config.js";
 import { fetchGwtBuildInfo } from "./gwtBuild.js";
 import { buildGwtRegistryFromCacheJs } from "./gwtRegistry.js";
+import { parseFoodId } from "./foodModel.js";
+import { writeGwtObject } from "./gwtWriter.js";
 import type { StructFieldDef } from "./structReader.js";
 import {
   parseGwtResponse,
@@ -52,7 +54,18 @@ export interface LoseItSession {
  */
 export type GwtParam =
   | { kind: "dayDate"; dayNumber: number }
-  | { kind: "integer"; value: number };
+  | { kind: "integer"; value: number }
+  | { kind: "string"; value: string | null }
+  | { kind: "int"; value: number }
+  | { kind: "boolean"; value: boolean }
+  | { kind: "primaryKey"; bytes: readonly number[] }
+  | {
+      kind: "object";
+      declaredType: string;
+      value: unknown;
+      registry: ReadonlyMap<string, StructFieldDef[]>;
+      signatures: ReadonlyMap<string, string>;
+    };
 
 const GWT_TYPE = {
   serviceRequestToken:
@@ -60,11 +73,32 @@ const GWT_TYPE = {
   userId: "com.loseit.core.client.model.UserId/4281239478",
   dayDate: "com.loseit.core.shared.model.DayDate/1611136587",
   integer: "java.lang.Integer/3438268394",
+  string: "java.lang.String/2004016611",
+  primaryKey: "com.loseit.core.client.model.interfaces.IPrimaryKey",
+  simplePrimaryKey: "com.loseit.core.client.model.SimplePrimaryKey/3621315060",
+  bytes: "[B/3308590456",
 } as const;
 
 /** The GWT type signature a parameter serializes as. */
 function paramTypeName(param: GwtParam): string {
-  return param.kind === "dayDate" ? GWT_TYPE.dayDate : GWT_TYPE.integer;
+  switch (param.kind) {
+    case "dayDate": return GWT_TYPE.dayDate;
+    case "integer": return GWT_TYPE.integer;
+    case "string": return GWT_TYPE.string;
+    case "int": return "I";
+    case "boolean": return "Z";
+    case "primaryKey": return GWT_TYPE.primaryKey;
+    case "object": return param.declaredType;
+  }
+}
+
+function quoteGwtString(value: string): string {
+  return value.replace(/[\0|\\\uD800-\uFFFF]/g, (char) => {
+    if (char === "\0") return "\\0";
+    if (char === "|") return "\\!";
+    if (char === "\\") return "\\\\";
+    return `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`;
+  });
 }
 
 /** Days per date-range request. Keeps each response fast to build and parse. */
@@ -147,10 +181,7 @@ export class LoseItClient {
     let permutation = gwt.permutationOverride;
     let policyHash = gwt.policyHashOverride;
 
-    const needsDiscovery =
-      gwt.autoFetch && (permutation === null || policyHash === null);
-
-    if (needsDiscovery) {
+    if (gwt.autoFetch) {
       try {
         const info = await fetchGwtBuildInfo(
           gwt.moduleBase,
@@ -272,6 +303,7 @@ export class LoseItClient {
     params: GwtParam[],
     retried = false,
     timeoutMs = this.config.requestTimeoutMs,
+    retryOnFailure = true,
   ): Promise<{ raw: GwtResponse; reader: GwtReader }> {
     await this.prepare();
 
@@ -303,9 +335,16 @@ export class LoseItClient {
         signal: AbortSignal.timeout(timeoutMs),
       });
     } catch (error) {
-      if (!retried && error instanceof Error && error.name !== "TimeoutError") {
+      if (
+        retryOnFailure &&
+        !retried &&
+        error instanceof Error &&
+        error.name !== "TimeoutError"
+      ) {
         await new Promise((r) => setTimeout(r, 1000));
-        return this.gwtRpcWithParams(method, params, true, timeoutMs);
+        return this.gwtRpcWithParams(
+          method, params, true, timeoutMs, retryOnFailure,
+        );
       }
       throw new LoseItNetworkError(
         `GWT-RPC request failed for ${method}`,
@@ -314,14 +353,18 @@ export class LoseItClient {
       );
     }
 
-    if (response.status === 401 && !retried) {
+    if (retryOnFailure && response.status === 401 && !retried) {
       await this.login();
-      return this.gwtRpcWithParams(method, params, true, timeoutMs);
+      return this.gwtRpcWithParams(
+        method, params, true, timeoutMs, retryOnFailure,
+      );
     }
 
-    if (response.status >= 500 && !retried) {
+    if (retryOnFailure && response.status >= 500 && !retried) {
       await new Promise((r) => setTimeout(r, 1000));
-      return this.gwtRpcWithParams(method, params, true, timeoutMs);
+      return this.gwtRpcWithParams(
+        method, params, true, timeoutMs, retryOnFailure,
+      );
     }
 
     if (!response.ok) {
@@ -339,6 +382,35 @@ export class LoseItClient {
     const reader = new GwtReader(parsed.values, parsed.stringTable);
 
     return { raw: parsed, reader };
+  }
+
+  /** Mutations are never retried: a lost response does not mean the write failed. */
+  async gwtWriteWithParams(
+    method: string,
+    params: GwtParam[],
+  ): Promise<{ raw: GwtResponse; reader: GwtReader }> {
+    return this.gwtRpcWithParams(
+      method,
+      params,
+      false,
+      this.config.requestTimeoutMs,
+      false,
+    );
+  }
+
+  async getFoodDraft(foodId: string, source: string | null, name: string) {
+    return this.gwtRpcWithParams("getUnsavedFoodLogEntry", [
+      { kind: "primaryKey", bytes: parseFoodId(foodId) },
+      { kind: "string", value: source },
+      { kind: "string", value: name },
+    ]);
+  }
+
+  async getFoodDetails(foodId: string) {
+    return this.gwtRpcWithParams("getFood", [
+      { kind: "primaryKey", bytes: parseFoodId(foodId) },
+      { kind: "string", value: "en-US" },
+    ]);
   }
 
   /**
@@ -476,13 +548,44 @@ export class LoseItClient {
 
     for (const [index, param] of params.entries()) {
       const typeRef = paramTypeRefs[index]!;
-      if (param.kind === "dayDate") {
-        // DayDate serializes as { Date a; int dayNumber; int gmtOffset }. The
-        // app sends a null Date and keys the day off the day number.
-        values.push(typeRef, "0", String(param.dayNumber), String(timezoneOffset));
-      } else {
-        // Boxed java.lang.Integer: concrete type ref followed by the int value.
-        values.push(typeRef, String(param.value));
+      switch (param.kind) {
+        case "dayDate":
+          // DayDate serializes as { Date a; int dayNumber; int gmtOffset }.
+          values.push(typeRef, "0", String(param.dayNumber), String(timezoneOffset));
+          break;
+        case "integer":
+          values.push(typeRef, String(param.value));
+          break;
+        case "string":
+          values.push(param.value === null ? "0" : ref(param.value));
+          break;
+        case "int":
+          values.push(String(param.value));
+          break;
+        case "boolean":
+          values.push(param.value ? "1" : "0");
+          break;
+        case "primaryKey":
+          if (
+            param.bytes.length !== 16 ||
+            !param.bytes.every(
+              (byte) => Number.isInteger(byte) && byte >= -128 && byte <= 127,
+            )
+          ) {
+            throw new Error("Invalid food primary key");
+          }
+          values.push(
+            ref(GWT_TYPE.simplePrimaryKey),
+            ref(GWT_TYPE.bytes),
+            String(param.bytes.length),
+            ...param.bytes.map(String),
+          );
+          break;
+        case "object":
+          values.push(
+            ...writeGwtObject(param.value, ref, param.registry, param.signatures),
+          );
+          break;
       }
     }
 
@@ -490,7 +593,7 @@ export class LoseItClient {
       "7", // stream version
       "0", // flags
       String(stringTable.length),
-      ...stringTable,
+      ...stringTable.map(quoteGwtString),
       moduleRef,
       policyRef,
       serviceRef,

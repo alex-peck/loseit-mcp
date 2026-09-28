@@ -13,6 +13,7 @@ import {
   GWT_ENUMS,
   NUTRIENT_BY_INTID,
 } from "./structTypes.js";
+import { foodMeasureName } from "./foodModel.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -362,8 +363,14 @@ export interface FoodNutrition {
 export interface FoodLogItem {
   name: string;
   brand: string;
-  /** Number of servings logged (informational; nutrition is already portion-adjusted). */
+  foodId: string | null;
+  entryId: string | null;
+  meal: "breakfast" | "lunch" | "dinner" | "snacks" | null;
+  /** Internal portion multiplier; nutrition is already adjusted for this portion. */
   quantity: number | null;
+  /** Actual amount in servingUnit; quantity is the internal portion multiplier. */
+  servingAmount: number | null;
+  servingUnit: string | null;
   nutrition: FoodNutrition;
 }
 
@@ -424,6 +431,18 @@ function doubleValue(v: unknown): number | null {
   const raw = rec && rec._cls === "Double" ? rec.v : v;
   return typeof raw === "number" ? raw : null;
 }
+
+function primaryKeyId(value: unknown): string | null {
+  const key = asRecord(value);
+  const bytes = key && (key.f0 ?? key.keyBytes);
+  return Array.isArray(bytes) &&
+    bytes.length === 16 &&
+    bytes.every((byte) => Number.isInteger(byte) && byte >= -128 && byte <= 127)
+    ? Buffer.from(bytes).toString("base64url")
+    : null;
+}
+
+const MEALS = ["breakfast", "lunch", "dinner", "snacks"] as const;
 
 function round(value: number | null, digits: number): number | null {
   if (value === null) return null;
@@ -508,6 +527,14 @@ function foodItemsByDay(
       servingSize && typeof servingSize.quantity === "number"
         ? servingSize.quantity
         : null;
+    const measure = servingSize && asRecord(servingSize.measure);
+    const measureId = measure?.f0 ?? measure?.measureId;
+    const mealType = ctx && asRecord(ctx.mealType);
+    const mealOrdinal = mealType?.f0 ?? mealType?.ordinal;
+    const meal =
+      typeof mealOrdinal === "number" && Number.isInteger(mealOrdinal)
+        ? MEALS[mealOrdinal] ?? null
+        : null;
 
     const nutrition: FoodNutrition = { ...EMPTY_NUTRITION };
     const pairs = foodNutrients?.nutrients;
@@ -526,7 +553,19 @@ function foodItemsByDay(
 
     let dayItems = byDay.get(day);
     if (!dayItems) byDay.set(day, (dayItems = []));
-    dayItems.push({ name, brand, quantity: round(quantity, 4), nutrition });
+    dayItems.push({
+      name,
+      brand,
+      foodId: primaryKeyId(ident?.primaryKey),
+      entryId: primaryKeyId(entry.entryKey),
+      meal,
+      quantity: round(quantity, 4),
+      servingAmount: servingSize && typeof servingSize.amount === "number"
+        ? round(servingSize.amount, 4)
+        : null,
+      servingUnit: typeof measureId === "number" ? foodMeasureName(measureId) : null,
+      nutrition,
+    });
     anyItem = true;
   }
 
@@ -646,7 +685,12 @@ function extractFoodLogHeuristic(
     entries.push({
       name: food.name,
       brand: food.brand,
+      foodId: null,
+      entryId: null,
+      meal: null,
       quantity: null,
+      servingAmount: null,
+      servingUnit: null,
       nutrition: { ...EMPTY_NUTRITION },
     });
   }

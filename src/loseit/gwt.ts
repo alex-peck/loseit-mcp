@@ -373,17 +373,19 @@ export function dayNumberToDate(dayNumber: number): Date {
   return new Date(utcEpoch + dayNumber * msPerDay);
 }
 
-export function getTimezoneOffset(timezone: string): number {
-  const now = new Date();
+export function getTimezoneOffset(timezone: string, date: Date = new Date()): number {
   const formatter = new Intl.DateTimeFormat("en-US", {
     timeZone: timezone,
     timeZoneName: "shortOffset",
   });
-  const parts = formatter.formatToParts(now);
+  const parts = formatter.formatToParts(date);
   const tzPart = parts.find((p) => p.type === "timeZoneName");
-  if (!tzPart) return -5;
+  if (!tzPart) throw new Error(`No GMT offset for ${timezone}`);
 
-  const match = tzPart.value.match(/GMT([+-]?\d+)/);
-  if (!match?.[1]) return -5;
+  if (tzPart.value === "GMT") return 0;
+  const match = tzPart.value.match(/^GMT([+-]\d{1,2})(?::(\d{2}))?$/);
+  if (!match?.[1]) {
+    throw new Error(`Unsupported GMT offset for ${timezone}`);
+  }
   return parseInt(match[1], 10);
 }

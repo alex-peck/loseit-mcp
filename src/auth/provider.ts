@@ -21,10 +21,10 @@ import type {
 } from "@modelcontextprotocol/sdk/shared/auth.js";
 
 import type { HttpServerConfig } from "../config.js";
+import { MCP_SCOPE, MCP_WRITE_SCOPE } from "./scopes.js";
 import { EncryptedStore, hashToken, type PersistedState } from "./store.js";
 import type { UserClientManager } from "./userClients.js";
 
-const MCP_SCOPE = "mcp:tools";
 const LOGIN_TTL_MS = 10 * 60 * 1000;
 const CODE_TTL_MS = 5 * 60 * 1000;
 const ACCESS_TOKEN_TTL_SECONDS = 60 * 60;
@@ -410,8 +410,15 @@ export class LoseItOAuthProvider implements OAuthServerProvider {
   }
 
   private validateScopes(scopes: string[] | undefined): void {
-    if (scopes?.some((scope) => scope !== MCP_SCOPE)) {
-      throw new InvalidScopeError(`Only the ${MCP_SCOPE} scope is supported`);
+    if (scopes?.some((scope) =>
+      scope !== MCP_SCOPE && scope !== MCP_WRITE_SCOPE
+    )) {
+      throw new InvalidScopeError("Unsupported scope requested");
+    }
+    if (scopes?.includes(MCP_WRITE_SCOPE) && !scopes.includes(MCP_SCOPE)) {
+      throw new InvalidScopeError(
+        `${MCP_WRITE_SCOPE} also requires ${MCP_SCOPE}`,
+      );
     }
   }
 
@@ -453,7 +460,9 @@ export class LoseItOAuthProvider implements OAuthServerProvider {
     error?: string,
   ): string {
     const clientName = client.client_name ?? "ChatGPT";
-    const scopeDescription = this.normalizedScopes(params.scopes).join(", ");
+    const scopeDescription = this.normalizedScopes(params.scopes).map((scope) =>
+      scope === MCP_WRITE_SCOPE ? "log foods (write)" : "read Lose It data"
+    ).join(" and ");
     const errorMarkup = error
       ? `<div class="error" role="alert">${escapeHtml(error)}</div>`
       : "";
@@ -515,5 +524,3 @@ export class LoseItOAuthProvider implements OAuthServerProvider {
 </html>`;
   }
 }
-
-export { MCP_SCOPE };

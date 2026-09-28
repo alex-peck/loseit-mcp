@@ -4,8 +4,10 @@ import assert from "node:assert/strict";
 import {
   DateRangeError,
   MAX_RANGE_DAYS,
+  resolveDayNumber,
   resolveDateRange,
 } from "./dateRange.js";
+import { dateToDayNumber } from "../loseit/gwt.js";
 import type { LoseItClient } from "../loseit/client.js";
 
 // resolveDateRange only needs the account timezone off the client.
@@ -80,5 +82,20 @@ describe("resolveDateRange", () => {
     );
 
     assert.equal(r.dayCount, MAX_RANGE_DAYS);
+  });
+});
+
+describe("resolveDayNumber", () => {
+  it("uses the requested day", () => {
+    assert.equal(
+      resolveDayNumber("2026-09-28", client),
+      dateToDayNumber(new Date("2026-09-28")),
+    );
+  });
+
+  it("rejects malformed and nonexistent dates", () => {
+    for (const date of ["2026-2-03", "2026-02-30", "not-a-date"]) {
+      assert.throws(() => resolveDayNumber(date, client), DateRangeError);
+    }
   });
 });

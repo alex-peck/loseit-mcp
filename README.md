@@ -2,8 +2,6 @@
 
 Unofficial MCP server for Lose It, reverse-engineered from observed web app traffic and validated against live API behavior.
 
-Built entirely by Claude Opus 4.6 via Claude Code.
-
 ## Overview
 
 This project exposes Lose It calorie tracking and nutrition data through MCP using the web app's GWT-RPC API.
@@ -17,9 +15,11 @@ Supported capabilities include:
 - **food aggregation** — the most-logged / highest-calorie foods across a range
 - reading a single day's calorie summary with budget, eaten, and remaining
   calories for any date (historical dates supported), plus the recorded weight
-- reading a single day's food log entries with food name, brand, servings
-  logged, and per-food nutrition for the logged portion (calories, protein, fat,
+- reading a single day's food log entries with food name, brand, measured
+  amount, serving unit, and per-food nutrition for the logged portion (calories, protein, fat,
   saturated fat, cholesterol, sodium, carbohydrates, fiber, and sugars)
+- searching the food database, inspecting a selected food's default serving
+  and available measures, and logging that food into a chosen meal and date
 
 ## Tools
 
@@ -31,11 +31,54 @@ Supported capabilities include:
 | `loseit_get_top_foods` | range | Foods ranked by total calories or logging frequency, with each food's share of range calories. |
 | `loseit_get_daily_summary` | one day | A single day's calorie summary (plus the week's breakdown for a current-week date). |
 | `loseit_get_food_log` | one day | A single day's individual food entries with per-food nutrition. |
+| `loseit_get_food_model` | metadata | Meal categories, measurement and nutrient units, account timezone, and logging workflow. |
+| `loseit_search_foods` | search | Search food database by name; returns exact food IDs plus the search context required to fetch them. |
+| `loseit_get_food` | one food | Inspect the default serving, nutrient values, and available serving-size descriptors for a search result. |
+| `loseit_log_food` | write | Log a selected food into breakfast, lunch, dinner, or snacks on a given date. |
 
 Every range tool accepts the same arguments: `startDate` + `endDate`
 (`YYYY-MM-DD`, inclusive), or `days` counting back from `endDate` (which
 defaults to today). The default range is the last 30 days and the maximum span
 is 1100 days.
+
+### Logging food
+
+Call `loseit_search_foods` with a food name, choose a result, then pass its
+`foodId`, `name`, and `source` **unchanged** to `loseit_get_food` to inspect its
+default serving and nutrition. Pass the same three fields to `loseit_log_food`,
+along with a required `meal` (`breakfast`, `lunch`, `dinner`, or `snacks`).
+`date` is optional (`YYYY-MM-DD` in the configured account timezone, default
+today). For a measured amount, supply
+`portion: {"amount": 30, "unit": "grams"}` or
+`portion: {"amount": 16, "unit": "fluid ounces"}`. The tool
+selects that food's matching serving-size descriptor and applies its
+reference-amount conversion. If multiple descriptors match, specify
+`servingSizeIndex` from `loseit_get_food` as well; when using an index without
+`unit`, `amount` is in the descriptor's unit. Common mass and liquid-volume
+units can be converted within their respective families if the exact unit is
+missing. **Mass-to-volume conversions require a food-specific density and
+are not guessed.** Alternatively, omit `portion` and use `servings` (default
+1) to multiply the default portion (including its displayed amount). Never
+supply both.
+
+`loseit_get_food` reports the default serving and each available descriptor's
+physical `amount`, `unit`, and `referenceAmount`; `quantity` is Lose It's
+internal portion multiplier, **not** the physical amount. The food log
+includes `servingAmount` in `servingUnit`, plus the meal, food ID, and entry ID
+when its full model can be decoded. `loseit_get_food_model` lists the unit
+names and logging workflow.
+
+Food logging creates a new entry and is **not idempotent**. Write RPCs are
+never automatically retried: if the request times out or its response is lost,
+check `loseit_get_food_log` before trying again. Search and logging require the
+live GWT model registry; if auto-discovery fails, these tools return an
+explicit error rather than guessing a food model. Creating foods, editing
+entries, and deleting entries are not yet supported.
+
+In HTTP mode, logging requires both the `mcp:tools` and `mcp:tools:write`
+OAuth scopes. Existing read-only authorizations cannot log food: reconnect
+and authorize again with both scopes, since a refresh token cannot add write
+access. Local stdio mode does not use OAuth scopes.
 
 ## API Coverage
 

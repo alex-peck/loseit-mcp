@@ -1,7 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
-import { LoseItClient, type GwtParam } from "./client.js";
+import { LoseItClient, LoseItApiError, LoseItNetworkError, type GwtParam } from "./client.js";
 import { loadConfig } from "../config.js";
 
 const config = loadConfig({
@@ -78,5 +78,64 @@ describe("buildGwtRequest", () => {
     );
     // The two DayDate types dedupe to a single string-table entry.
     assert.ok(body.endsWith("8|21078800|9|0|9300|-5|9|0|9359|-5|"), body);
+  });
+
+  it("serializes a food search with primitive arguments and escaped strings", () => {
+    const body = buildRequest("searchFoods", [
+      { kind: "string", value: "Apple | Pear\\🍐" },
+      { kind: "string", value: "en-US" },
+      { kind: "int", value: 20 },
+      { kind: "boolean", value: true },
+      { kind: "boolean", value: false },
+    ]);
+    assert.ok(body.includes("java.lang.String/2004016611|I|Z|"));
+    assert.ok(body.includes("Apple \\! Pear\\\\\\ud83c\\udf50|en-US|"));
+    assert.ok(body.endsWith("|6|5|8|8|9|10|10|5|0|6|21078800|7|-5|11|12|20|1|0|"), body);
+  });
+});
+
+describe("gwtWriteWithParams", () => {
+  it("does not retry a failed HTTP response", async () => {
+    const client = new LoseItClient(config);
+    client.restoreSession({
+      cookies: { session: "test" },
+      userId: 21078800,
+      username: "Andrew",
+      timestamp: 0,
+    });
+    const previousFetch = globalThis.fetch;
+    let calls = 0;
+    globalThis.fetch = async () => {
+      calls++;
+      return new Response("failure", { status: 503 });
+    };
+    try {
+      await assert.rejects(client.gwtWriteWithParams("write", []), LoseItApiError);
+      assert.equal(calls, 1);
+    } finally {
+      globalThis.fetch = previousFetch;
+    }
+  });
+
+  it("does not retry when the response is lost", async () => {
+    const client = new LoseItClient(config);
+    client.restoreSession({
+      cookies: { session: "test" },
+      userId: 21078800,
+      username: "Andrew",
+      timestamp: 0,
+    });
+    const previousFetch = globalThis.fetch;
+    let calls = 0;
+    globalThis.fetch = async () => {
+      calls++;
+      throw new Error("connection reset");
+    };
+    try {
+      await assert.rejects(client.gwtWriteWithParams("write", []), LoseItNetworkError);
+      assert.equal(calls, 1);
+    } finally {
+      globalThis.fetch = previousFetch;
+    }
   });
 });

@@ -2,9 +2,10 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
 import type { LoseItClient } from "../loseit/client.js";
-import { dateToDayNumber, localTodayAsUTCDate, GwtParseError } from "../loseit/gwt.js";
+import { GwtParseError } from "../loseit/gwt.js";
 import { extractFoodLog } from "../loseit/extractors.js";
 import { READ_ONLY_TOOL_ANNOTATIONS } from "./common.js";
+import { DateRangeError, resolveDayNumber } from "./dateRange.js";
 import { errorResponse, textResponse } from "./response.js";
 
 export function registerGetFoodLogTool(
@@ -17,7 +18,9 @@ export function registerGetFoodLogTool(
       title: "Get Food Log",
       description:
         "Returns the food log for a given day. Each entry includes the food name, " +
-        "brand, servings logged (quantity), and per-food nutrition for the logged " +
+        "brand, foodId, entryId, meal, servingAmount in servingUnit, " +
+        "internal quantity (portion multiplier), " +
+        "and per-food nutrition for the logged " +
         "portion (calories, protein, fat, saturatedFat, cholesterol, sodium, " +
         "carbohydrates, fiber, sugars; grams except calories/kcal and mg for " +
         "cholesterol/sodium). Also returns totalCalories for the day. A nutrient is " +
@@ -35,10 +38,7 @@ export function registerGetFoodLogTool(
     },
     async (args) => {
       try {
-        const targetDate = args.date
-          ? new Date(args.date)
-          : localTodayAsUTCDate(client.getTimezone());
-        const targetDayNumber = dateToDayNumber(targetDate);
+        const targetDayNumber = resolveDayNumber(args.date, client);
 
         const { raw } = await client.gwtRpc(
           "getDailyDetailsForDate",
@@ -54,7 +54,7 @@ export function registerGetFoodLogTool(
         );
         return textResponse(result);
       } catch (error) {
-        if (error instanceof GwtParseError) {
+        if (error instanceof GwtParseError || error instanceof DateRangeError) {
           return errorResponse(error);
         }
         throw error;

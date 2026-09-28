@@ -126,6 +126,7 @@ describe("LoseItOAuthProvider", () => {
       );
       const auth = await provider.verifyAccessToken(firstTokens.access_token);
       assert.equal(auth.extra?.["userId"], user.id);
+      assert.deepEqual(auth.scopes, ["mcp:tools"]);
       assert.ok(firstTokens.refresh_token);
 
       const secondTokens = await provider.exchangeRefreshToken(
@@ -137,6 +138,46 @@ describe("LoseItOAuthProvider", () => {
         () =>
           provider.exchangeRefreshToken(client, firstTokens.refresh_token!),
         /Invalid or expired refresh token/,
+      );
+      await assert.rejects(
+        () => provider.exchangeRefreshToken(
+          client, secondTokens.refresh_token!, ["mcp:tools", "mcp:tools:write"],
+        ),
+        /cannot be expanded/,
+      );
+      await assert.rejects(
+        () => provider.authorize(client, {
+          codeChallenge: "challenge",
+          redirectUri: client.redirect_uris[0]!,
+          scopes: ["mcp:tools:write"],
+        }, response),
+        /also requires mcp:tools/,
+      );
+
+      await provider.authorize(
+        client,
+        {
+          codeChallenge: "challenge",
+          redirectUri: client.redirect_uris[0]!,
+          resource: new URL("https://loseit.example.com/mcp"),
+          scopes: ["mcp:tools", "mcp:tools:write"],
+        },
+        response,
+      );
+      assert.match(signInPage, /log foods \(write\)/);
+      const writeLoginId = signInPage.match(/name="login_id" value="([^"]+)"/)?.[1];
+      assert.ok(writeLoginId);
+      const writeRedirect = await provider.completeLogin(
+        writeLoginId, user.email, user.password, user.timezone,
+      );
+      const writeCode = writeRedirect.searchParams.get("code");
+      assert.ok(writeCode);
+      const writeTokens = await provider.exchangeAuthorizationCode(
+        client, writeCode, undefined, client.redirect_uris[0],
+      );
+      assert.deepEqual(
+        (await provider.verifyAccessToken(writeTokens.access_token)).scopes,
+        ["mcp:tools", "mcp:tools:write"],
       );
     } finally {
       await rm(directory, { recursive: true, force: true });

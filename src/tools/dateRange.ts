@@ -56,11 +56,20 @@ export class DateRangeError extends Error {
 }
 
 function toDayNumber(iso: string, label: string): number {
+  if (!ISO_DATE.test(iso)) {
+    throw new DateRangeError(`${label} must be an ISO date (YYYY-MM-DD): ${iso}`);
+  }
   const date = new Date(`${iso}T00:00:00Z`);
-  if (Number.isNaN(date.getTime())) {
+  if (Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== iso) {
     throw new DateRangeError(`${label} is not a valid date: ${iso}`);
   }
   return dateToDayNumber(date);
+}
+
+export function resolveDayNumber(date: string | undefined, client: LoseItClient): number {
+  return date
+    ? toDayNumber(date, "date")
+    : dateToDayNumber(localTodayAsUTCDate(client.getTimezone()));
 }
 
 function toIso(dayNumber: number): string {
