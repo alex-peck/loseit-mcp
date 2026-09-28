@@ -33,7 +33,7 @@ async function main(): Promise<void> {
   const client = new LoseItClient(config);
   await client.initialize();
 
-  const server = createServer(client, { requireWriteScope: false });
+  const server = createServer(client, { writeAuth: null });
   const transport = new StdioServerTransport();
 
   await server.connect(transport);

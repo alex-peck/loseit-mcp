@@ -15,7 +15,7 @@ import { registerLogFoodTool } from "./logFood.js";
 export function registerTools(
   server: McpServer,
   client: LoseItClient,
-  requireWriteScope: boolean,
+  writeAuth: { resourceMetadataUrl: string } | null,
 ): void {
   // Single-day tools.
   registerGetDailySummaryTool(server, client);
@@ -23,7 +23,7 @@ export function registerTools(
   registerSearchFoodsTool(server, client);
   registerGetFoodTool(server, client);
   registerGetFoodModelTool(server, client);
-  registerLogFoodTool(server, client, requireWriteScope);
+  registerLogFoodTool(server, client, writeAuth);
 
   // Bulk date-range tools, each backed by a single range RPC.
   registerGetDailySummariesTool(server, client);

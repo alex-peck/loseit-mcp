@@ -6,14 +6,14 @@ import { registerTools } from "./tools/index.js";
 
 export function createServer(
   client: LoseItClient,
-  options: { requireWriteScope: boolean },
+  options: { writeAuth: { resourceMetadataUrl: string } | null },
 ): McpServer {
   const server = new McpServer({
     name: APP_NAME,
     version: APP_VERSION,
   });
 
-  registerTools(server, client, options.requireWriteScope);
+  registerTools(server, client, options.writeAuth);
 
   return server;
 }

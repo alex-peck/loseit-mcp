@@ -255,7 +255,11 @@ export async function startHttpServer(
 
     try {
       const client = await userClients.getClient(userId);
-      const mcpServer = createServer(client, { requireWriteScope: true });
+      const mcpServer = createServer(client, {
+        writeAuth: {
+          resourceMetadataUrl: getOAuthProtectedResourceMetadataUrl(mcpUrl),
+        },
+      });
       let transport!: StreamableHTTPServerTransport;
       transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: () => randomUUID(),

@@ -16,7 +16,7 @@ it("exposes food discovery and a non-read-only logging tool through MCP", async 
     LOSEIT_PASSWORD: "secret",
     LOSEIT_GWT_AUTOFETCH: "false",
   }));
-  const server = createServer(loseIt, { requireWriteScope: false });
+  const server = createServer(loseIt, { writeAuth: null });
   const client = new Client({ name: "test", version: "1.0" });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   try {
@@ -100,12 +100,31 @@ it("denies food writes when a hosted client lacks the write scope", async () => 
     LOSEIT_PASSWORD: "secret",
     LOSEIT_GWT_AUTOFETCH: "false",
   }));
-  const server = createServer(loseIt, { requireWriteScope: true });
+  const server = createServer(loseIt, {
+    writeAuth: {
+      resourceMetadataUrl: "https://loseit.example.com/.well-known/oauth-protected-resource/mcp",
+    },
+  });
   const client = new Client({ name: "test", version: "1.0" });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const send = clientTransport.send.bind(clientTransport);
+  clientTransport.send = (message, options) => send(message, {
+    ...options,
+    authInfo: {
+      token: "read-only-token",
+      clientId: "test-client",
+      scopes: [MCP_SCOPE],
+      expiresAt: Math.floor(Date.now() / 1000) + 3600,
+    },
+  });
   try {
     await server.connect(serverTransport);
     await client.connect(clientTransport);
+    const { tools } = await client.listTools();
+    const logTool = tools.find((tool) => tool.name === "loseit_log_food");
+    assert.deepEqual(logTool?._meta?.["securitySchemes"], [
+      { type: "oauth2", scopes: [MCP_SCOPE, MCP_WRITE_SCOPE] },
+    ]);
     const result = await client.callTool({
       name: "loseit_log_food",
       arguments: {
@@ -117,6 +136,11 @@ it("denies food writes when a hosted client lacks the write scope", async () => 
     });
     assert.equal(result.isError, true);
     assert.match(JSON.stringify(result.content), /mcp:tools:write/);
+    assert.deepEqual(result._meta?.["mcp/www_authenticate"], [
+      'Bearer resource_metadata="https://loseit.example.com/.well-known/oauth-protected-resource/mcp", ' +
+      'error="insufficient_scope", error_description="Food logging requires write access", ' +
+      'scope="mcp:tools mcp:tools:write"',
+    ]);
   } finally {
     await client.close();
     await server.close();
@@ -129,7 +153,11 @@ it("accepts the write scope at the hosted tool boundary", async () => {
     LOSEIT_PASSWORD: "secret",
     LOSEIT_GWT_AUTOFETCH: "false",
   }));
-  const server = createServer(loseIt, { requireWriteScope: true });
+  const server = createServer(loseIt, {
+    writeAuth: {
+      resourceMetadataUrl: "https://loseit.example.com/.well-known/oauth-protected-resource/mcp",
+    },
+  });
   const client = new Client({ name: "test", version: "1.0" });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   const send = clientTransport.send.bind(clientTransport);

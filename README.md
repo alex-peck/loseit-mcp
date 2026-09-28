@@ -78,7 +78,11 @@ entries, and deleting entries are not yet supported.
 In HTTP mode, logging requires both the `mcp:tools` and `mcp:tools:write`
 OAuth scopes. Existing read-only authorizations cannot log food: reconnect
 and authorize again with both scopes, since a refresh token cannot add write
-access. Local stdio mode does not use OAuth scopes.
+access. A client must request the write scope; the sign-in page displays the
+requested permissions but does not provide a scope picker. Local stdio mode
+does not use OAuth scopes. After adding tools, refresh the app's tool scan in
+ChatGPT developer mode; reauthorizing alone does not refresh its tool list.
+Published apps require an admin to update actions or republish the app.
 
 ## API Coverage
 

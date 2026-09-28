@@ -1,7 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
-import { MCP_WRITE_SCOPE } from "../auth/scopes.js";
+import { MCP_SCOPE, MCP_WRITE_SCOPE } from "../auth/scopes.js";
 import type { LoseItClient } from "../loseit/client.js";
 import { extractFoodLog, type FoodLogItem } from "../loseit/extractors.js";
 import {
@@ -141,7 +141,7 @@ export function prepareFoodEntry(
 export function registerLogFoodTool(
   server: McpServer,
   client: LoseItClient,
-  requireWriteScope: boolean,
+  writeAuth: { resourceMetadataUrl: string } | null,
 ): void {
   server.registerTool(
     "loseit_log_food",
@@ -183,14 +183,32 @@ export function registerLogFoodTool(
         ),
       },
       annotations: WRITE_TOOL_ANNOTATIONS,
+      ...(writeAuth === null ? {} : {
+        _meta: {
+          securitySchemes: [
+            { type: "oauth2", scopes: [MCP_SCOPE, MCP_WRITE_SCOPE] },
+          ],
+        },
+      }),
     },
     async ({ foodId, name, source, meal, servings, portion, date }, extra) => {
-      try {
-        if (requireWriteScope && !extra.authInfo?.scopes.includes(MCP_WRITE_SCOPE)) {
-          throw new StructParseError(
+      if (writeAuth !== null &&
+        !extra.authInfo?.scopes.includes(MCP_WRITE_SCOPE)) {
+        return {
+          ...errorResponse(new StructParseError(
             `Logging food requires ${MCP_WRITE_SCOPE}; reconnect with write access`,
-          );
-        }
+          )),
+          _meta: {
+            "mcp/www_authenticate": [
+              `Bearer resource_metadata="${writeAuth.resourceMetadataUrl}", ` +
+              `error="insufficient_scope", ` +
+              `error_description="Food logging requires write access", ` +
+              `scope="${MCP_SCOPE} ${MCP_WRITE_SCOPE}"`,
+            ],
+          },
+        };
+      }
+      try {
         if (portion && servings !== undefined) {
           throw new StructParseError("Specify either servings or portion, not both");
         }
