@@ -31,6 +31,7 @@
  */
 
 import type { StructFieldDef, StructFieldType } from "./structReader.js";
+import { preferGwtSignature } from "./gwtSignatures.js";
 
 interface Triple {
   instantiate: string;
@@ -359,11 +360,14 @@ export function buildGwtRegistryFromCacheJs(
     return out;
   };
 
-  // 5. assemble the registry (first signature wins on short-name collision).
+  // 5. Choose the same preferred class as the outgoing signature map.
   const registry = new Map<string, StructFieldDef[]>();
+  const selectedSignatures = new Map<string, string>();
   for (const [sig, tr] of triples) {
     const short = shortName(sig);
-    if (registry.has(short)) continue;
+    const existing = selectedSignatures.get(short);
+    if (existing && !preferGwtSignature(sig, existing)) continue;
+    selectedSignatures.set(short, sig);
     const types = [
       ...parseReads(tr.instantiate),
       ...parseReads(tr.deserialize),

@@ -94,7 +94,7 @@ describe("resolveDayNumber", () => {
   });
 
   it("rejects malformed and nonexistent dates", () => {
-    for (const date of ["2026-2-03", "2026-02-30", "not-a-date"]) {
+    for (const date of ["", "2026-2-03", "2026-02-30", "not-a-date"]) {
       assert.throws(() => resolveDayNumber(date, client), DateRangeError);
     }
   });

@@ -1,12 +1,15 @@
 import type { GwtResponse } from "./gwt.js";
 import { GWT_ARRAY_CLASS, StructParseError, type StructFieldDef } from "./structReader.js";
+import { preferGwtSignature } from "./gwtSignatures.js";
 
 export function responseSignatures(raw: GwtResponse): Map<string, string> {
   const signatures = new Map<string, string>();
   for (const signature of raw.stringTable) {
     if (!/^.+\/\d+$/.test(signature)) continue;
     const name = signature.slice(0, signature.lastIndexOf("/"));
-    signatures.set(name.slice(name.lastIndexOf(".") + 1), signature);
+    const shortName = name.slice(name.lastIndexOf(".") + 1);
+    const existing = signatures.get(shortName);
+    if (!existing || preferGwtSignature(signature, existing)) signatures.set(shortName, signature);
   }
   return signatures;
 }

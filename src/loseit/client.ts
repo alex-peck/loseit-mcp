@@ -4,6 +4,7 @@ import { dirname } from "node:path";
 import type { LoseItConfig } from "../config.js";
 import { fetchGwtBuildInfo } from "./gwtBuild.js";
 import { buildGwtRegistryFromCacheJs } from "./gwtRegistry.js";
+import { preferGwtSignature } from "./gwtSignatures.js";
 import { parseFoodId } from "./foodModel.js";
 import { writeGwtObject } from "./gwtWriter.js";
 import type { StructFieldDef } from "./structReader.js";
@@ -58,6 +59,7 @@ export type GwtParam =
   | { kind: "integer"; value: number }
   | { kind: "string"; value: string | null }
   | { kind: "int"; value: number }
+  | { kind: "double"; value: number }
   | { kind: "boolean"; value: boolean }
   | { kind: "primaryKey"; bytes: readonly number[] }
   | {
@@ -87,6 +89,7 @@ function paramTypeName(param: GwtParam): string {
     case "integer": return GWT_TYPE.integer;
     case "string": return GWT_TYPE.string;
     case "int": return "I";
+    case "double": return "D";
     case "boolean": return "Z";
     case "primaryKey": return GWT_TYPE.primaryKey;
     case "object": return param.declaredType;
@@ -102,6 +105,18 @@ function quoteGwtString(value: string): string {
   });
 }
 
+/** Every `<fqcn>/<crc>` type signature the permutation can serialize. */
+export function gwtSignaturesFromCacheJs(cacheJs: string): Map<string, string> {
+  const signatures = new Map<string, string>();
+  for (const [, signature] of cacheJs.matchAll(/'((?:com|java)\.[\w.$]+\/\d+|\[[\w.$;[]+\/\d+)'/g)) {
+    const name = signature!.slice(0, signature!.lastIndexOf("/"));
+    const shortName = name.slice(name.lastIndexOf(".") + 1);
+    const existing = signatures.get(shortName);
+    if (!existing || preferGwtSignature(signature!, existing)) signatures.set(shortName, signature!);
+  }
+  return signatures;
+}
+
 /** Days per date-range request. Keeps each response fast to build and parse. */
 const RANGE_CHUNK_DAYS = 200;
 
@@ -115,7 +130,9 @@ export class LoseItClient {
   private policyHash: string | null = null;
   private permutation: string | null = null;
   private gwtRegistry: Map<string, StructFieldDef[]> | null = null;
+  private gwtSignatures = new Map<string, string>();
   private buildInfoPromise: Promise<void> | null = null;
+  private loginPromise: Promise<void> | null = null;
 
   constructor(
     private readonly config: LoseItConfig,
@@ -134,15 +151,13 @@ export class LoseItClient {
       this.username = cached.username;
 
       // Validate session is still alive
-      try {
-        await this.gwtRpc("getGoalsData", []);
-        console.error(
-          `Loaded cached session for ${this.username} (user ${this.userId})`,
-        );
-        return;
-      } catch {
-        console.error("Cached session expired, re-authenticating...");
-      }
+      // Reads already refresh rejected sessions once. Network/server failures
+      // must not trigger another password login (or amplify login rate limits).
+      await this.gwtRpc("getGoalsData", []);
+      console.error(
+        `Loaded cached session for ${this.username} (user ${this.userId})`,
+      );
+      return;
     }
 
     await this.login();
@@ -196,6 +211,7 @@ export class LoseItClient {
         );
         try {
           this.gwtRegistry = buildGwtRegistryFromCacheJs(info.cacheJs);
+          this.gwtSignatures = gwtSignaturesFromCacheJs(info.cacheJs);
           console.error(
             `Built GWT model registry from permutation (${this.gwtRegistry.size} types).`,
           );
@@ -219,7 +235,12 @@ export class LoseItClient {
     this.policyHash = policyHash ?? gwt.fallbackPolicyHash;
   }
 
-  async login(): Promise<void> {
+  login(): Promise<void> {
+    this.loginPromise ??= this.loginOnce().finally(() => { this.loginPromise = null; });
+    return this.loginPromise;
+  }
+
+  private async loginOnce(): Promise<void> {
     const url = "https://api.loseit.com/account/login";
     const body = new URLSearchParams({
       username: this.config.email,
@@ -271,7 +292,7 @@ export class LoseItClient {
     };
     this.userId = data.user_id;
 
-    // The GWT-RPC calls use the user's first name (e.g., "Andrew").
+    // The GWT-RPC calls use the user's first name (e.g., "Test").
     // The login response only returns email, so we need to get the name
     // from a profile call or config. For now, extract from email prefix
     // and capitalize first letter only. This may need to be a config value
@@ -329,6 +350,7 @@ export class LoseItClient {
     const cookieHeader = Array.from(this.cookies.entries())
       .map(([k, v]) => `${k}=${v}`)
       .join("; ");
+    const sessionCookies = this.cookies;
 
     let response: Response;
     try {
@@ -365,7 +387,8 @@ export class LoseItClient {
     }
 
     if (retryOnFailure && response.status === 401 && !retried) {
-      await this.login();
+      await response.text();
+      if (this.cookies === sessionCookies) await this.login();
       return this.gwtRpcWithParams(
         method, params, true, timeoutMs, retryOnFailure,
       );
@@ -397,7 +420,7 @@ export class LoseItClient {
         retryOnFailure && !retried &&
         error instanceof GwtAuthenticationError
       ) {
-        await this.login();
+        if (this.cookies === sessionCookies) await this.login();
         return this.gwtRpcWithParams(
           method, params, true, timeoutMs, retryOnFailure,
         );
@@ -513,13 +536,21 @@ export class LoseItClient {
     return this.gwtRegistry;
   }
 
+  /**
+   * Serialization signatures (`<fqcn>/<crc>`) by short class name, taken from
+   * the live permutation. Needed to send objects the server has not sent us.
+   */
+  getGwtSignatures(): ReadonlyMap<string, string> {
+    return this.gwtSignatures;
+  }
+
   private buildGwtRequest(
     method: string,
     params: GwtParam[],
     timezoneOffset: number,
   ): string {
     // Exact format captured from Proxyman traffic for getGoalsData:
-    // 7|0|7|moduleBase|policyHash|serviceClass|getGoalsData|tokenType|userIdType|username|1|2|3|4|1|5|5|0|6|21078800|7|-5|
+    // 7|0|7|moduleBase|policyHash|serviceClass|getGoalsData|tokenType|userIdType|username|1|2|3|4|1|5|5|0|6|42|7|-5|
     //
     // String table (indices 1-7):
     //   1=moduleBase, 2=policyHash, 3=serviceClass, 4=method,
@@ -531,7 +562,7 @@ export class LoseItClient {
     //   5        = ServiceRequestToken type ref
     //   5|0      = token instance (type ref 5, field value 0)
     //   6        = UserId type ref
-    //   21078800 = userId value
+    //   42 = userId value
     //   7        = username string ref
     //   -5       = timezone offset
     //
@@ -585,6 +616,8 @@ export class LoseItClient {
           values.push(param.value === null ? "0" : ref(param.value));
           break;
         case "int":
+        case "double":
+          if (!Number.isFinite(param.value)) throw new Error(`Invalid ${param.kind} parameter`);
           values.push(String(param.value));
           break;
         case "boolean":
