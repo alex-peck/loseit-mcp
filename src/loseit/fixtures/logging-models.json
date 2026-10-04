@@ -1,0 +1,689 @@
+{
+  "source": "Lose It public web permutation BA1F6675680809C4804FF1CEFF6DD713 (2026-10-03)",
+  "models": {
+    "LoseItRemoteServiceResponse": {
+      "fields": [
+        {
+          "name": "f0",
+          "type": "obj"
+        },
+        {
+          "name": "f1",
+          "type": "obj"
+        },
+        {
+          "name": "f2",
+          "type": "long"
+        },
+        {
+          "name": "f3",
+          "type": "obj"
+        },
+        {
+          "name": "f4",
+          "type": "boolean"
+        }
+      ],
+      "signature": "com.loseit.core.client.service.responses.LoseItRemoteServiceResponse/1071940969"
+    },
+    "SimplePrimaryKey": {
+      "fields": [
+        {
+          "name": "f0",
+          "type": "obj"
+        }
+      ],
+      "signature": "com.loseit.core.client.model.SimplePrimaryKey/3621315060"
+    },
+    "DayDate": {
+      "fields": [
+        {
+          "name": "f0",
+          "type": "obj"
+        },
+        {
+          "name": "dayNumber",
+          "type": "int"
+        },
+        {
+          "name": "f2",
+          "type": "int"
+        }
+      ],
+      "signature": "com.loseit.core.shared.model.DayDate/1611136587"
+    },
+    "Date": {
+      "fields": [
+        {
+          "name": "f0",
+          "type": "long"
+        }
+      ],
+      "signature": "java.util.Date/3385151746"
+    },
+    "Double": {
+      "fields": [
+        {
+          "name": "v",
+          "type": "double"
+        }
+      ],
+      "signature": "java.lang.Double/858496421"
+    },
+    "Note": {
+      "fields": [
+        {
+          "name": "f0",
+          "type": "string"
+        },
+        {
+          "name": "f1",
+          "type": "int"
+        },
+        {
+          "name": "f2",
+          "type": "boolean"
+        },
+        {
+          "name": "f3",
+          "type": "int"
+        },
+        {
+          "name": "f4",
+          "type": "string"
+        },
+        {
+          "name": "f5",
+          "type": "int"
+        },
+        {
+          "name": "f6",
+          "type": "long"
+        },
+        {
+          "name": "f7",
+          "type": "obj"
+        }
+      ],
+      "signature": "com.loseit.core.client.model.Note/3916765409"
+    },
+    "CustomGoal": {
+      "fields": [
+        {
+          "name": "f0",
+          "type": "obj"
+        },
+        {
+          "name": "f1",
+          "type": "double"
+        },
+        {
+          "name": "f2",
+          "type": "boolean"
+        },
+        {
+          "name": "f3",
+          "type": "string"
+        },
+        {
+          "name": "f4",
+          "type": "obj"
+        },
+        {
+          "name": "f5",
+          "type": "obj"
+        },
+        {
+          "name": "f6",
+          "type": "double"
+        },
+        {
+          "name": "f7",
+          "type": "double"
+        },
+        {
+          "name": "f8",
+          "type": "string"
+        },
+        {
+          "name": "f9",
+          "type": "obj"
+        },
+        {
+          "name": "f10",
+          "type": "string"
+        },
+        {
+          "name": "f11",
+          "type": "string"
+        },
+        {
+          "name": "f12",
+          "type": "obj"
+        },
+        {
+          "name": "f13",
+          "type": "obj"
+        },
+        {
+          "name": "f14",
+          "type": "obj"
+        },
+        {
+          "name": "f15",
+          "type": "double"
+        },
+        {
+          "name": "f16",
+          "type": "string"
+        },
+        {
+          "name": "f17",
+          "type": "long"
+        },
+        {
+          "name": "f18",
+          "type": "obj"
+        }
+      ],
+      "signature": "com.loseit.core.client.model.CustomGoal/3094185758"
+    },
+    "CustomGoalValue": {
+      "fields": [
+        {
+          "name": "f0",
+          "type": "obj"
+        },
+        {
+          "name": "f1",
+          "type": "obj"
+        },
+        {
+          "name": "f2",
+          "type": "boolean"
+        },
+        {
+          "name": "f3",
+          "type": "obj"
+        },
+        {
+          "name": "f4",
+          "type": "obj"
+        },
+        {
+          "name": "f5",
+          "type": "double"
+        },
+        {
+          "name": "f6",
+          "type": "long"
+        },
+        {
+          "name": "f7",
+          "type": "obj"
+        }
+      ],
+      "signature": "com.loseit.core.client.model.CustomGoalValue/1455343169"
+    },
+    "Exercise": {
+      "fields": [
+        {
+          "name": "f0",
+          "type": "int"
+        },
+        {
+          "name": "f1",
+          "type": "int"
+        },
+        {
+          "name": "f2",
+          "type": "string"
+        },
+        {
+          "name": "f3",
+          "type": "double"
+        },
+        {
+          "name": "f4",
+          "type": "string"
+        },
+        {
+          "name": "f5",
+          "type": "string"
+        },
+        {
+          "name": "f6",
+          "type": "long"
+        },
+        {
+          "name": "f7",
+          "type": "obj"
+        }
+      ],
+      "signature": "com.loseit.core.client.model.Exercise/768553247"
+    },
+    "ExerciseCategory": {
+      "fields": [
+        {
+          "name": "f0",
+          "type": "int"
+        },
+        {
+          "name": "f1",
+          "type": "obj"
+        },
+        {
+          "name": "f2",
+          "type": "int"
+        },
+        {
+          "name": "f3",
+          "type": "string"
+        },
+        {
+          "name": "f4",
+          "type": "boolean"
+        },
+        {
+          "name": "f5",
+          "type": "string"
+        },
+        {
+          "name": "f6",
+          "type": "string"
+        },
+        {
+          "name": "f7",
+          "type": "long"
+        },
+        {
+          "name": "f8",
+          "type": "obj"
+        }
+      ],
+      "signature": "com.loseit.core.client.model.ExerciseCategory/2279150703"
+    },
+    "ExerciseLogEntry": {
+      "fields": [
+        {
+          "name": "f0",
+          "type": "obj"
+        },
+        {
+          "name": "f1",
+          "type": "double"
+        },
+        {
+          "name": "f2",
+          "type": "obj"
+        },
+        {
+          "name": "f3",
+          "type": "boolean"
+        },
+        {
+          "name": "f4",
+          "type": "obj"
+        },
+        {
+          "name": "f5",
+          "type": "obj"
+        },
+        {
+          "name": "f6",
+          "type": "boolean"
+        },
+        {
+          "name": "f7",
+          "type": "int"
+        },
+        {
+          "name": "f8",
+          "type": "boolean"
+        },
+        {
+          "name": "f9",
+          "type": "int"
+        },
+        {
+          "name": "f10",
+          "type": "boolean"
+        },
+        {
+          "name": "f11",
+          "type": "long"
+        },
+        {
+          "name": "f12",
+          "type": "obj"
+        }
+      ],
+      "signature": "com.loseit.core.client.model.ExerciseLogEntry/3129076305"
+    },
+    "SearchResultExercise": {
+      "fields": [
+        {
+          "name": "f0",
+          "type": "obj"
+        },
+        {
+          "name": "f1",
+          "type": "string"
+        },
+        {
+          "name": "f2",
+          "type": "string"
+        },
+        {
+          "name": "f3",
+          "type": "string"
+        },
+        {
+          "name": "f4",
+          "type": "int"
+        },
+        {
+          "name": "f5",
+          "type": "obj"
+        },
+        {
+          "name": "f6",
+          "type": "obj"
+        },
+        {
+          "name": "f7",
+          "type": "int"
+        }
+      ],
+      "signature": "com.loseit.core.client.model.search.SearchResultExercise/4144849034"
+    },
+    "CalorieBurnMetrics": {
+      "fields": [
+        {
+          "name": "f0",
+          "type": "obj"
+        },
+        {
+          "name": "f1",
+          "type": "double"
+        },
+        {
+          "name": "f2",
+          "type": "double"
+        }
+      ],
+      "signature": "com.loseit.core.client.model.CalorieBurnMetrics/3650191062"
+    },
+    "FoodLogEntry": {
+      "fields": [
+        {
+          "name": "identifier",
+          "type": "obj"
+        },
+        {
+          "name": "context",
+          "type": "obj"
+        },
+        {
+          "name": "serving",
+          "type": "obj"
+        },
+        {
+          "name": "f3",
+          "type": "boolean"
+        },
+        {
+          "name": "f4",
+          "type": "long"
+        },
+        {
+          "name": "f5",
+          "type": "long"
+        },
+        {
+          "name": "entryKey",
+          "type": "obj"
+        }
+      ],
+      "signature": "com.loseit.core.client.model.FoodLogEntry/264522954"
+    },
+    "FoodLogEntryContext": {
+      "fields": [
+        {
+          "name": "f0",
+          "type": "obj"
+        },
+        {
+          "name": "dayDate",
+          "type": "obj"
+        },
+        {
+          "name": "f2",
+          "type": "boolean"
+        },
+        {
+          "name": "f3",
+          "type": "int"
+        },
+        {
+          "name": "f4",
+          "type": "int"
+        },
+        {
+          "name": "f5",
+          "type": "boolean"
+        },
+        {
+          "name": "f6",
+          "type": "obj"
+        },
+        {
+          "name": "f7",
+          "type": "obj"
+        },
+        {
+          "name": "mealType",
+          "type": "obj"
+        },
+        {
+          "name": "f9",
+          "type": "obj"
+        }
+      ],
+      "signature": "com.loseit.core.client.model.FoodLogEntryContext/4082213671"
+    },
+    "FoodIdentifier": {
+      "fields": [
+        {
+          "name": "f0",
+          "type": "int"
+        },
+        {
+          "name": "f1",
+          "type": "string"
+        },
+        {
+          "name": "f2",
+          "type": "string"
+        },
+        {
+          "name": "name",
+          "type": "string"
+        },
+        {
+          "name": "brand",
+          "type": "string"
+        },
+        {
+          "name": "f5",
+          "type": "obj"
+        },
+        {
+          "name": "f6",
+          "type": "int"
+        },
+        {
+          "name": "f7",
+          "type": "obj"
+        },
+        {
+          "name": "f8",
+          "type": "long"
+        },
+        {
+          "name": "primaryKey",
+          "type": "obj"
+        }
+      ],
+      "signature": "com.loseit.core.client.model.FoodIdentifier/2763145970"
+    },
+    "FoodServing": {
+      "fields": [
+        {
+          "name": "nutrients",
+          "type": "obj"
+        },
+        {
+          "name": "servingSize",
+          "type": "obj"
+        }
+      ],
+      "signature": "com.loseit.core.client.model.FoodServing/1858865662"
+    },
+    "FoodServingSize": {
+      "fields": [
+        {
+          "name": "quantity",
+          "type": "double"
+        },
+        {
+          "name": "f1",
+          "type": "boolean"
+        },
+        {
+          "name": "measure",
+          "type": "obj"
+        },
+        {
+          "name": "factorPerReference",
+          "type": "double"
+        },
+        {
+          "name": "referenceAmount",
+          "type": "double"
+        },
+        {
+          "name": "amount",
+          "type": "double"
+        }
+      ],
+      "signature": "com.loseit.core.client.model.FoodServingSize/63998910"
+    },
+    "FoodNutrients": {
+      "fields": [
+        {
+          "name": "f0",
+          "type": "double"
+        },
+        {
+          "name": "portionFactor",
+          "type": "double"
+        },
+        {
+          "name": "nutrients",
+          "type": "obj"
+        }
+      ],
+      "signature": "com.loseit.core.client.model.FoodNutrients/1097231324"
+    },
+    "FoodMeasurement": {
+      "fields": [
+        {
+          "name": "nutrientTypeId",
+          "type": "int"
+        }
+      ],
+      "signature": "com.loseit.healthdata.model.shared.food.FoodMeasurement/2371921172"
+    },
+    "FoodMeasure": {
+      "fields": [
+        {
+          "name": "f0",
+          "type": "int"
+        }
+      ],
+      "signature": "com.loseit.core.client.model.FoodMeasure/1457474932"
+    },
+    "FoodLogEntryType": {
+      "fields": [
+        {
+          "name": "f0",
+          "type": "int"
+        }
+      ],
+      "signature": "com.loseit.core.client.model.interfaces.FoodLogEntryType/1152459170"
+    },
+    "FoodForFoodDatabase": {
+      "fields": [
+        {
+          "name": "f0",
+          "type": "obj"
+        },
+        {
+          "name": "f1",
+          "type": "obj"
+        },
+        {
+          "name": "f2",
+          "type": "obj"
+        },
+        {
+          "name": "f3",
+          "type": "boolean"
+        },
+        {
+          "name": "f4",
+          "type": "boolean"
+        },
+        {
+          "name": "f5",
+          "type": "boolean"
+        },
+        {
+          "name": "f6",
+          "type": "long"
+        },
+        {
+          "name": "f7",
+          "type": "int"
+        },
+        {
+          "name": "f8",
+          "type": "int"
+        }
+      ],
+      "signature": "com.loseit.core.client.model.FoodForFoodDatabase/2501655516"
+    },
+    "RecordedWeight": {
+      "fields": [
+        {
+          "name": "dayDate",
+          "type": "obj"
+        },
+        {
+          "name": "f1",
+          "type": "boolean"
+        },
+        {
+          "name": "f2",
+          "type": "long"
+        },
+        {
+          "name": "weight",
+          "type": "double"
+        }
+      ],
+      "signature": "com.loseit.core.client.model.RecordedWeight/1309383152"
+    }
+  }
+}

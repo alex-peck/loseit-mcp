@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 
@@ -103,6 +104,19 @@ function quoteGwtString(value: string): string {
     if (char === "\\") return "\\\\";
     return `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`;
   });
+}
+
+/**
+ * iOS app version the sync gateway is told it is talking to. The gateway
+ * answers 409 without a device and version; this is the build the protocol was
+ * captured from.
+ */
+const GATEWAY_APP_VERSION = "18.5.400.8831";
+
+/** A stable per-account device id, so the gateway sees one consistent device. */
+function gatewayDeviceId(userId: number): string {
+  const hex = createHash("sha256").update(`loseit-mcp:${userId}`).digest("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-a${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
 }
 
 /** Every `<fqcn>/<crc>` type signature the permutation can serialize. */
@@ -444,6 +458,72 @@ export class LoseItClient {
       this.config.requestTimeoutMs,
       false,
     );
+  }
+
+  /**
+   * POST a protobuf transaction bundle to the mobile sync gateway.
+   *
+   * The gateway is the iOS app's API and carries data the web app has no RPC
+   * for (fasting). It authenticates with the `liauth` JWT cookie the password
+   * login already issues, sent as a Bearer token, and rejects requests that do
+   * not identify a device and app version. An authentication failure is
+   * rejected before anything is applied, so it is safe to log in again and
+   * resend once even for writes.
+   */
+  async gatewayBundle(body: Uint8Array, timeoutMs = this.config.requestTimeoutMs): Promise<Uint8Array> {
+    await this.prepare();
+    if (!this.userId || !this.username) {
+      throw new Error("Not authenticated — call initialize() first");
+    }
+    const url = "https://gateway.loseit.com/user/loseItTransactionBundle";
+    for (let attempt = 0; ; attempt++) {
+      const token = this.cookies.get("liauth") ?? this.cookies.get("fn_auth");
+      const sessionCookies = this.cookies;
+      if (!token) {
+        if (attempt > 0) throw new LoseItApiError("Login did not issue a gateway token", 401, url, "");
+        await this.login();
+        continue;
+      }
+      let response: Response;
+      try {
+        response = await fetch(url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/octet-stream",
+            Accept: "*/*",
+            Authorization: `Bearer ${decodeURIComponent(token)}`,
+            "x-Loseit-Device-Type": "iPhone",
+            "x-Loseit-Device": gatewayDeviceId(this.userId),
+            "x-Loseit-Version": GATEWAY_APP_VERSION,
+            "x-Loseit-HoursFromGMT": String(getTimezoneOffset(this.config.timezone)),
+            "User-Agent": `LoseIt!/${GATEWAY_APP_VERSION} (iOS 18.0; iPhone)`,
+          },
+          body,
+          signal: AbortSignal.timeout(timeoutMs),
+        });
+      } catch (error) {
+        throw new LoseItNetworkError("Gateway request failed", url, error);
+      }
+      if (response.status === 401 && attempt === 0) {
+        await response.arrayBuffer();
+        if (this.cookies === sessionCookies) await this.login();
+        continue;
+      }
+      if (!response.ok) {
+        const text = await response.text();
+        throw new LoseItApiError(
+          `Gateway request failed with ${response.status}`,
+          response.status,
+          url,
+          text.slice(0, 500),
+        );
+      }
+      try {
+        return new Uint8Array(await response.arrayBuffer());
+      } catch (error) {
+        throw new LoseItNetworkError("Gateway response was lost; check loseit_get_fasts before retrying a change", url, error);
+      }
+    }
   }
 
   async getFoodDraft(foodId: string, source: string | null, name: string) {

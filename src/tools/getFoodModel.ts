@@ -38,7 +38,7 @@ export function registerGetFoodModelTool(server: McpServer, client: LoseItClient
       ],
       limitations: [
         "Only food-specific units and compatible mass/volume conversions are supported. Mass and volume cannot be converted without food density.",
-        "Food creation, editing, deletion and recipe logging are not supported.",
+        "Custom food creation and recipe logging are not supported; edit or delete entries with loseit_update_food_entry and loseit_delete_food_entry.",
         "Unknown nutrientId fields have no verified name or unit mapping.",
       ],
     }),

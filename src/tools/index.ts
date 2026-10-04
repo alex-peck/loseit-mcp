@@ -11,6 +11,12 @@ import { registerGetTopFoodsTool } from "./getTopFoods.js";
 import { registerGetWeightHistoryTool } from "./getWeightHistory.js";
 import { registerSearchFoodsTool } from "./searchFoods.js";
 import { registerLogFoodTool } from "./logFood.js";
+import { registerFastingTools } from "./fasting.js";
+import { registerCustomGoalTools } from "./customGoals.js";
+import { registerExerciseTools } from "./exercise.js";
+import { registerFoodEntryTools } from "./foodEntries.js";
+import { registerNoteTools } from "./notes.js";
+import { registerRecordWeightTool } from "./recordWeight.js";
 
 export function registerTools(
   server: McpServer,
@@ -24,6 +30,14 @@ export function registerTools(
   registerGetFoodTool(server, client);
   registerGetFoodModelTool(server, client);
   registerLogFoodTool(server, client, writeAuth);
+  registerFoodEntryTools(server, client, writeAuth);
+  registerNoteTools(server, client, writeAuth);
+  registerRecordWeightTool(server, client, writeAuth);
+  registerCustomGoalTools(server, client, writeAuth);
+  registerExerciseTools(server, client, writeAuth);
+
+  // Fasting, via the mobile sync gateway.
+  registerFastingTools(server, client, writeAuth);
 
   // Bulk date-range tools, each backed by a single range RPC.
   registerGetDailySummariesTool(server, client);

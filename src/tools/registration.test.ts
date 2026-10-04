@@ -11,11 +11,11 @@ import { LoseItClient } from "../loseit/client.js";
 import { createServer } from "../server.js";
 
 it("exposes food discovery and a non-read-only logging tool through MCP", async () => {
-  const loseIt = new LoseItClient(loadConfig({
+  const loseIt = new LoseItClient({ ...loadConfig({
     LOSEIT_EMAIL: "test@example.com",
     LOSEIT_PASSWORD: "secret",
     LOSEIT_GWT_AUTOFETCH: "false",
-  }));
+  }), sessionPath: null });
   const server = createServer(loseIt, { writeAuth: null });
   const client = new Client({ name: "test", version: "1.0" });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -30,6 +30,11 @@ it("exposes food discovery and a non-read-only logging tool through MCP", async 
       "loseit_get_food",
       "loseit_log_food",
       "loseit_get_food_log",
+      "loseit_get_fasts", "loseit_start_fast", "loseit_end_fast", "loseit_update_fast", "loseit_delete_fast",
+      "loseit_update_food_entry", "loseit_delete_food_entry",
+      "loseit_search_exercises", "loseit_get_exercise_log", "loseit_log_exercise", "loseit_delete_exercise",
+      "loseit_record_weight", "loseit_get_notes", "loseit_add_note", "loseit_update_note", "loseit_delete_note",
+      "loseit_get_custom_goals", "loseit_record_custom_goal_value", "loseit_delete_custom_goal_value",
     ]) {
       assert.ok(tools.some((tool) => tool.name === name), name);
     }
@@ -95,11 +100,11 @@ it("exposes food discovery and a non-read-only logging tool through MCP", async 
 });
 
 it("denies food writes when a hosted client lacks the write scope", async () => {
-  const loseIt = new LoseItClient(loadConfig({
+  const loseIt = new LoseItClient({ ...loadConfig({
     LOSEIT_EMAIL: "test@example.com",
     LOSEIT_PASSWORD: "secret",
     LOSEIT_GWT_AUTOFETCH: "false",
-  }));
+  }), sessionPath: null });
   const server = createServer(loseIt, {
     writeAuth: {
       resourceMetadataUrl: "https://loseit.example.com/.well-known/oauth-protected-resource/mcp",
@@ -141,6 +146,26 @@ it("denies food writes when a hosted client lacks the write scope", async () => 
       'error="insufficient_scope", error_description="Food logging requires write access", ' +
       'scope="mcp:tools mcp:tools:write"',
     ]);
+    const id = "AAAAAAAAAAAAAAAAAAAAAA";
+    const writes: Record<string, Record<string, unknown>> = {
+      loseit_start_fast: {}, loseit_end_fast: {},
+      loseit_update_fast: { fastId: id, targetHours: 16 }, loseit_delete_fast: { fastId: id },
+      loseit_update_food_entry: { entryId: id, meal: "snacks" }, loseit_delete_food_entry: { entryId: id },
+      loseit_log_exercise: { categoryId: id, exerciseId: id, minutes: 30 }, loseit_delete_exercise: { entryId: id },
+      loseit_record_weight: { weight: 200 },
+      loseit_add_note: { title: "Test", body: "Test" },
+      loseit_update_note: { noteId: id, title: "Test" }, loseit_delete_note: { noteId: id },
+      loseit_record_custom_goal_value: { goal: "water", value: 8 }, loseit_delete_custom_goal_value: { goal: "water" },
+    };
+    for (const [name, args] of Object.entries(writes)) {
+      const tool = tools.find((t) => t.name === name);
+      assert.equal(tool?.annotations?.readOnlyHint, false, name);
+      assert.deepEqual(tool?._meta?.["securitySchemes"], [{ type: "oauth2", scopes: [MCP_SCOPE, MCP_WRITE_SCOPE] }], name);
+      const denied = await client.callTool({ name, arguments: args });
+      assert.equal(denied.isError, true, name);
+      assert.match(JSON.stringify(denied.content), /mcp:tools:write/, name);
+      assert.ok(denied._meta?.["mcp/www_authenticate"], name);
+    }
   } finally {
     await client.close();
     await server.close();
@@ -148,11 +173,11 @@ it("denies food writes when a hosted client lacks the write scope", async () => 
 });
 
 it("accepts the write scope at the hosted tool boundary", async () => {
-  const loseIt = new LoseItClient(loadConfig({
+  const loseIt = new LoseItClient({ ...loadConfig({
     LOSEIT_EMAIL: "test@example.com",
     LOSEIT_PASSWORD: "secret",
     LOSEIT_GWT_AUTOFETCH: "false",
-  }));
+  }), sessionPath: null });
   const server = createServer(loseIt, {
     writeAuth: {
       resourceMetadataUrl: "https://loseit.example.com/.well-known/oauth-protected-resource/mcp",

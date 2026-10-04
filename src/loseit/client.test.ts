@@ -304,3 +304,39 @@ it("deduplicates simultaneous password logins", async () => {
     assert.equal(logins, 1);
   } finally { globalThis.fetch = previousFetch; }
 });
+
+it("refreshes a rejected gateway token once and uses the replacement", async () => {
+  const client = new LoseItClient(config);
+  client.restoreSession({ cookies: { liauth: "expired" }, userId: 42, username: "Test", timestamp: 0 });
+  const previousFetch = globalThis.fetch;
+  const tokens: string[] = [];
+  let logins = 0;
+  globalThis.fetch = async (input, init) => {
+    if (String(input).endsWith("/account/login")) {
+      logins++;
+      return new Response(JSON.stringify({ user_id: 42, username: "test@example.com" }), { headers: { "Set-Cookie": "liauth=fresh; Path=/" } });
+    }
+    tokens.push(new Headers(init?.headers).get("Authorization")!);
+    return tokens.length === 1 ? new Response("expired", { status: 401 }) : new Response(Uint8Array.of(32, 1));
+  };
+  try {
+    assert.deepEqual(await client.gatewayBundle(Uint8Array.of(32, 42)), Uint8Array.of(32, 1));
+    assert.deepEqual(tokens, ["Bearer expired", "Bearer fresh"]);
+    assert.equal(logins, 1);
+  } finally { globalThis.fetch = previousFetch; }
+});
+
+it("does not retry gateway writes when the response body is lost", async () => {
+  const client = new LoseItClient(config);
+  client.restoreSession({ cookies: { liauth: "valid" }, userId: 42, username: "Test", timestamp: 0 });
+  const previousFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls++;
+    return new Response(new ReadableStream({ start(controller) { controller.error(new Error("connection reset")); } }));
+  };
+  try {
+    await assert.rejects(client.gatewayBundle(Uint8Array.of(32, 42)), LoseItNetworkError);
+    assert.equal(calls, 1);
+  } finally { globalThis.fetch = previousFetch; }
+});
