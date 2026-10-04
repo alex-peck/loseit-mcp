@@ -1,7 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
-import { MCP_SCOPE, MCP_WRITE_SCOPE } from "../auth/scopes.js";
 import type { LoseItClient } from "../loseit/client.js";
 import { extractFoodLog, type FoodLogItem } from "../loseit/extractors.js";
 import {
@@ -22,6 +21,7 @@ import { WRITE_TOOL_ANNOTATIONS } from "./common.js";
 import { DateRangeError, resolveDayNumber } from "./dateRange.js";
 import { foodSelectionSchema } from "./getFood.js";
 import { errorResponse, textResponse } from "./response.js";
+import { writeScopeError, writeToolMeta, type WriteAuth } from "./writeAuth.js";
 
 const MEAL_ORDINAL = {
   breakfast: 0,
@@ -74,7 +74,7 @@ export function assertFoodSaved(value: unknown): void {
   }
 }
 
-async function loadIdentifiedFoodLog(
+export async function loadIdentifiedFoodLog(
   client: LoseItClient,
   dayNumber: number,
 ): Promise<FoodLogItem[]> {
@@ -141,7 +141,7 @@ export function prepareFoodEntry(
 export function registerLogFoodTool(
   server: McpServer,
   client: LoseItClient,
-  writeAuth: { resourceMetadataUrl: string } | null,
+  writeAuth: WriteAuth,
 ): void {
   server.registerTool(
     "loseit_log_food",
@@ -183,31 +183,11 @@ export function registerLogFoodTool(
         ),
       },
       annotations: WRITE_TOOL_ANNOTATIONS,
-      ...(writeAuth === null ? {} : {
-        _meta: {
-          securitySchemes: [
-            { type: "oauth2", scopes: [MCP_SCOPE, MCP_WRITE_SCOPE] },
-          ],
-        },
-      }),
+      ...writeToolMeta(writeAuth),
     },
     async ({ foodId, name, source, meal, servings, portion, date }, extra) => {
-      if (writeAuth !== null &&
-        !extra.authInfo?.scopes.includes(MCP_WRITE_SCOPE)) {
-        return {
-          ...errorResponse(new StructParseError(
-            `Logging food requires ${MCP_WRITE_SCOPE}; reconnect with write access`,
-          )),
-          _meta: {
-            "mcp/www_authenticate": [
-              `Bearer resource_metadata="${writeAuth.resourceMetadataUrl}", ` +
-              `error="insufficient_scope", ` +
-              `error_description="Food logging requires write access", ` +
-              `scope="${MCP_SCOPE} ${MCP_WRITE_SCOPE}"`,
-            ],
-          },
-        };
-      }
+      const denied = writeScopeError(writeAuth, extra, "Food logging");
+      if (denied) return denied;
       try {
         if (portion && servings !== undefined) {
           throw new StructParseError("Specify either servings or portion, not both");

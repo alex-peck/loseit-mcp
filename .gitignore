@@ -8,3 +8,4 @@ dist
 .venv
 .mcp.json
 npm-debug.log*
+.harness/

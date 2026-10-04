@@ -42,7 +42,7 @@ export function registerGetNutritionHistoryTool(
         "logged days. Grams except calories (kcal) and sodium/cholesterol (mg). " +
         "Use this for macro trends, protein-target adherence, or fiber/sodium " +
         "analysis. Set includeFoods to also get the individual foods per day " +
-        "(much larger output — prefer loseit_get_food_logs for that). Specify " +
+        "(much larger output — prefer loseit_get_food_log for that). Specify " +
         "the range with startDate+endDate, or with days counting back from endDate.",
       inputSchema: {
         ...dateRangeInputSchema,

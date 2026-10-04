@@ -67,7 +67,7 @@ function toDayNumber(iso: string, label: string): number {
 }
 
 export function resolveDayNumber(date: string | undefined, client: LoseItClient): number {
-  return date
+  return date !== undefined
     ? toDayNumber(date, "date")
     : dateToDayNumber(localTodayAsUTCDate(client.getTimezone()));
 }
