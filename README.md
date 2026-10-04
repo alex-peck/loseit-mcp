@@ -4,7 +4,7 @@ Unofficial MCP server for Lose It, reverse-engineered from observed web app traf
 
 ## Overview
 
-This project exposes Lose It calorie tracking and nutrition data through MCP using the web app's GWT-RPC API.
+This project exposes Lose It calorie tracking and nutrition data through MCP using the web app's GWT-RPC API and the mobile sync gateway for fasting.
 
 Supported capabilities include:
 
@@ -20,6 +20,14 @@ Supported capabilities include:
   saturated fat, cholesterol, sodium, carbohydrates, fiber, and sugars)
 - searching the food database, inspecting a selected food's default serving
   and available measures, and logging that food into a chosen meal and date
+- editing (amount, meal) and deleting logged foods
+- **intermittent fasting** — fasting history, the fast in progress, the fasting
+  schedule, and starting, ending, editing, resuming, and deleting fasts
+- logging, reading, and deleting exercise
+- recording weigh-ins
+- daily notes: read, add, edit, delete
+- custom goals (steps, water, sleep, measurements, …): read and record or
+  remove a day's value
 
 ## Tools
 
@@ -35,6 +43,25 @@ Supported capabilities include:
 | `loseit_search_foods` | search | Search food database by name; returns exact food IDs plus the search context required to fetch them. |
 | `loseit_get_food` | one food | Inspect the default serving, nutrient values, and available serving-size descriptors for a search result. |
 | `loseit_log_food` | write | Log a selected food into breakfast, lunch, dinner, or snacks on a given date. |
+| `loseit_update_food_entry` | write | Change a logged food's amount (`portion`) and/or meal. |
+| `loseit_delete_food_entry` | write | Delete a logged food. |
+| `loseit_get_fasts` | range | Fasts that started in the range, the fast in progress, the fasting schedule, and summary stats. |
+| `loseit_start_fast` | write | Start a fast now or at an earlier time; defaults to the most common scheduled goal; supply `targetHours` for mixed schedules. |
+| `loseit_end_fast` | write | End the fast in progress now or at an earlier time. |
+| `loseit_update_fast` | write | Edit a fast's start, end, or goal; `endTime: null` resumes it. |
+| `loseit_delete_fast` | write | Delete a fast. |
+| `loseit_search_exercises` | search | Exercise categories with their variants and METs. |
+| `loseit_get_exercise_log` | one day | A day's exercises with minutes and calories. |
+| `loseit_log_exercise` | write | Log an exercise variant for some minutes (calories estimated as Lose It does, or supplied). |
+| `loseit_delete_exercise` | write | Delete a logged exercise. |
+| `loseit_record_weight` | write | Record a weigh-in (lb or kg) for a date, replacing that day's weight. |
+| `loseit_get_notes` | one day | A day's notes. |
+| `loseit_add_note` | write | Add a daily note. |
+| `loseit_update_note` | write | Edit a daily note. |
+| `loseit_delete_note` | write | Delete a daily note. |
+| `loseit_get_custom_goals` | one day | Custom goals with their range and the day's value. |
+| `loseit_record_custom_goal_value` | write | Record a goal's value for a date (replaces that day's value). |
+| `loseit_delete_custom_goal_value` | write | Remove a goal's value for a date. |
 
 Every range tool accepts the same arguments: `startDate` + `endDate`
 (`YYYY-MM-DD`, inclusive), or `days` counting back from `endDate` (which
@@ -72,11 +99,58 @@ Food logging creates a new entry and is **not idempotent**. Write RPCs are
 never automatically retried: if the request times out or its response is lost,
 check `loseit_get_food_log` before trying again. Search and logging require the
 live GWT model registry; if auto-discovery fails, these tools return an
-explicit error rather than guessing a food model. Creating foods, editing
-entries, and deleting entries are not yet supported.
+explicit error rather than guessing a food model. Creating custom foods and
+recipes is not yet supported.
 
-In HTTP mode, logging requires both the `mcp:tools` and `mcp:tools:write`
-OAuth scopes. Existing read-only authorizations cannot log food: reconnect
+### Editing the log
+
+Food, exercise, and note editing tools identify an item by the id their read
+tool returns (`entryId` from `loseit_get_food_log` / `loseit_get_exercise_log`,
+or `noteId`) plus the `date` it is logged on. They re-read the day after writing
+and report an error if Lose It did not apply the requested change. Goal and
+weight writes also verify their saved values. Updates and deletes are safe to
+repeat; additions are not. Repeating a delete for an item already removed
+returns a not-found error without writing again.
+
+`loseit_update_food_entry` rebuilds the serving from the food, as the web app
+does, so `portion: {"amount": 2}` keeps the entry's current unit and
+`{"amount": 150, "unit": "grams"}` converts like `loseit_log_food`.
+
+`loseit_log_exercise` estimates calories with Lose It's own formula —
+(METs − 1) × weight in kg × 1.05 × hours, which reproduces the burns Lose It
+stores — unless `calories` is supplied. Like the apps, logging exercise posts
+the workout to the account's activity feed. Durations must be whole minutes
+(1–1440); the same duration is used for the saved workout and calorie estimate.
+After a timeout or lost response, check the exercise log before retrying.
+
+Goals that Lose It calculates from the food log (net carbs, protein, fiber)
+cannot be recorded manually. Water and other goals must already exist on the
+account; create them in the Lose It app.
+
+### Fasting
+
+Fasting is not part of the web app. These tools use the mobile apps' sync
+gateway (`gateway.loseit.com/user/loseItTransactionBundle`, protobuf), which
+accepts the same login as the web API. The gateway only offers "changes since
+a cursor", so the first fasting call in a process downloads the account's sync
+history (a few megabytes, roughly 10–20 seconds) and later calls only fetch
+what changed. Times are given and returned in the account timezone
+(`YYYY-MM-DDTHH:MM`, or with an explicit offset). Local times skipped by a clock
+change are rejected; repeated local times require an explicit UTC offset.
+Starts and ends more than five minutes in the future are rejected (the small
+tolerance allows clock skew). The default goal uses the most common scheduled
+goal, falling back to the latest fast's goal or 16 hours. The gateway's weekday
+numbering is unverified, so mixed schedules do not select a goal by weekday;
+supply `targetHours` to choose one explicitly. Goals must be at least one
+minute and are rounded to whole minutes.
+
+Fasting changes upsert the whole fast and require a gateway acknowledgement.
+Updates and deletes use `fastId` without a date. A start creates a new ID;
+after an uncertain result, check `loseit_get_fasts` before retrying. Concurrent
+fasting calls on a client are serialized to keep its sync cursor consistent.
+
+In HTTP mode, all logging and fasting changes require both the `mcp:tools` and `mcp:tools:write`
+OAuth scopes. Existing read-only authorizations cannot write: reconnect
 and authorize again with both scopes, since a refresh token cannot add write
 access. A client must request the write scope; the sign-in page displays the
 requested permissions but does not provide a scope picker. Local stdio mode
@@ -84,12 +158,16 @@ does not use OAuth scopes. After adding tools, refresh the app's tool scan in
 ChatGPT developer mode; reauthorizing alone does not refresh its tool list.
 Published apps require an admin to update actions or republish the app.
 The server validates a cached Lose It session during sign-in and renews it if
-Lose It rejects a read request. Food-log writes are never automatically
+Lose It rejects a read request. GWT writes are never automatically
 retried, even if the upstream session expires.
 
 ## API Coverage
 
-The current implementation uses the Lose It web app GWT-RPC endpoint (`www.loseit.com/web/service`) with session cookies obtained from `api.loseit.com/account/login`. The iOS app's protobuf API is not used.
+Most tools use the Lose It web app GWT-RPC endpoint (`www.loseit.com/web/service`) with session cookies obtained from `api.loseit.com/account/login`. Fasting uses the iOS app's protobuf sync gateway (`gateway.loseit.com`), authenticated with the `liauth` token from the same login and identified as iOS app build 18.5.400 (the build its protocol was captured from).
+
+Avoid repeated logins: Lose It's login endpoint is rate-limited by Cloudflare
+(HTTP 429, error 1015, for roughly ten minutes after a handful of logins). The
+server reuses the cached session and only logs in when Lose It rejects it.
 
 The GWT-RPC policy hash and permutation header are tied to the current Lose It
 web app build and change whenever Lose It recompiles the web app. By default the
@@ -225,6 +303,10 @@ timezone. The health endpoint is `GET /healthz`.
 ## Notes
 
 - Session cookies are cached to `~/.loseit-mcp/session.json` to avoid re-authenticating on every server start. The cache is created with restricted file permissions.
+- Automated tests use isolated session storage and do not write to the real
+  account's session cache or contact its API.
+- Logging tools validate the numbered model fields they use against the live web
+  serializers and refuse changed layouts rather than writing mismatched data.
 - In HTTP mode, Lose It session cookies remain in memory. Encrypted credentials
   allow the server to re-authenticate an account after a restart or expired
   Lose It session without writing a plaintext per-user cookie cache.
